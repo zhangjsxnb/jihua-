@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   ChevronLeft, ChevronRight, Plus, Calendar as CalendarIcon,
   Clock, LayoutGrid, Trophy, Trash2, Edit3, X, Check
@@ -17,28 +17,25 @@ const DEFAULT_COMMON_PLANS = [
   { id: 'c2', title: '深度阅读', color: COLORS[0] },
 ];
 
-// ─────────────────────────────────────────
-//  localStorage 读写（唯一数据源）
-// ─────────────────────────────────────────
 const loadTasks = () => {
   try {
     return JSON.parse(localStorage.getItem('jihua_tasks') || '[]');
-  } catch { return []; }
+  } catch (e) { return []; }
 };
 
 const saveTasks = (tasks) => {
-  try { localStorage.setItem('jihua_tasks', JSON.stringify(tasks)); } catch {}
+  try { localStorage.setItem('jihua_tasks', JSON.stringify(tasks)); } catch (e) {}
 };
 
 const loadCommonPlans = () => {
   try {
     const data = JSON.parse(localStorage.getItem('jihua_commonPlans') || '[]');
     return data.length > 0 ? data : null;
-  } catch { return null; }
+  } catch (e) { return null; }
 };
 
 const saveCommonPlans = (plans) => {
-  try { localStorage.setItem('jihua_commonPlans', JSON.stringify(plans)); } catch {}
+  try { localStorage.setItem('jihua_commonPlans', JSON.stringify(plans)); } catch (e) {}
 };
 
 const App = () => {
@@ -54,15 +51,9 @@ const App = () => {
   const [formTitle, setFormTitle] = useState('');
   const [formColor, setFormColor] = useState(COLORS[0]);
 
-  // ─────────────────────────────────────────
-  //  每次 tasks 变化自动存 localStorage
-  // ─────────────────────────────────────────
   useEffect(() => { saveTasks(tasks); }, [tasks]);
   useEffect(() => { saveCommonPlans(commonPlans); }, [commonPlans]);
 
-  // ─────────────────────────────────────────
-  //  日期格式化
-  // ─────────────────────────────────────────
   const formatDate = (date) => {
     const y = date.getFullYear();
     const m = String(date.getMonth() + 1).padStart(2, '0');
@@ -70,9 +61,6 @@ const App = () => {
     return `${y}-${m}-${d}`;
   };
 
-  // ─────────────────────────────────────────
-  //  任务操作（本地状态 + localStorage 自动同步）
-  // ─────────────────────────────────────────
   const deleteTask = (id) => {
     setTasks((prev) => prev.filter((t) => t.id !== id));
     setModalConfig({ ...modalConfig, isOpen: false });
@@ -120,15 +108,11 @@ const App = () => {
     }
   };
 
-  // ─────────────────────────────────────────
-  //  视图组件
-  // ─────────────────────────────────────────
   const MonthView = () => {
-    const { firstDay, days } = (date => {
-      const y = date.getFullYear(), m = date.getMonth();
-      const first = new Date(y, m, 1).getDay();
-      return { firstDay: first === 0 ? 6 : first - 1, days: new Date(y, m + 1, 0).getDate() };
-    })(currentDate);
+    const y = currentDate.getFullYear(), m = currentDate.getMonth();
+    const first = new Date(y, m, 1).getDay();
+    const days = new Date(y, m + 1, 0).getDate();
+    const firstDay = first === 0 ? 6 : first - 1;
     const calendarDays = Array(firstDay).fill(null).concat([...Array(days).keys()].map(i => i + 1));
     return (
       <div className="grid grid-cols-7 gap-px bg-[#EFEBE7] border border-[#EFEBE7] rounded-[24px] overflow-hidden shadow-sm">
@@ -140,7 +124,7 @@ const App = () => {
           const dateStr = date ? formatDate(date) : '';
           const dayTasks = tasks.filter(t => t.date === dateStr);
           return (
-            <div key={idx} onDragOver={e => e.preventDefault()} onDrop={e => date && onDrop(e, dateStr)}
+            <div key={idx} onDragOver={(e) => e.preventDefault()} onDrop={(e) => date && onDrop(e, dateStr)}
               onClick={() => date && setModalConfig({ isOpen: true, mode: 'add', dateStr, task: null })}
               className={`min-h-[120px] p-1.5 transition-all flex flex-col gap-1 ${day ? 'bg-white/90 hover:bg-[#FAF9F9] cursor-pointer' : 'bg-white/20'}`}>
               {day && (
@@ -151,8 +135,8 @@ const App = () => {
               <div className="flex flex-col gap-1 overflow-hidden">
                 {dayTasks.map(t => (
                   <div key={t.id} draggable
-                    onDragStart={e => { e.stopPropagation(); e.dataTransfer.setData('type', 'task'); e.dataTransfer.setData('payload', JSON.stringify(t)); }}
-                    onClick={e => { e.stopPropagation(); setFormTitle(t.title); setFormColor(t.color); setModalConfig({ isOpen: true, mode: 'edit', dateStr: t.date, task: t }); }}
+                    onDragStart={(e) => { e.stopPropagation(); e.dataTransfer.setData('type', 'task'); e.dataTransfer.setData('payload', JSON.stringify(t)); }}
+                    onClick={(e) => { e.stopPropagation(); setFormTitle(t.title); setFormColor(t.color); setModalConfig({ isOpen: true, mode: 'edit', dateStr: t.date, task: t }); }}
                     className={`text-[10px] px-1.5 py-1 rounded-[6px] flex items-center gap-1.5 ${t.color.bg} ${t.color.text} font-bold ${t.completed ? 'opacity-40 line-through' : ''}`}>
                     <div className={`w-1.5 h-1.5 rounded-full shrink-0 ${t.completed ? t.color.text.replace('text-', 'bg-') : t.color.dot}`} />
                     <span className="leading-tight break-words">{t.title}</span>
@@ -177,7 +161,7 @@ const App = () => {
           const dayTasks = tasks.filter(t => t.date === dateStr);
           const isToday = formatDate(new Date()) === dateStr;
           return (
-            <div key={idx} onDragOver={e => e.preventDefault()} onDrop={e => onDrop(e, dateStr)}
+            <div key={idx} onDragOver={(e) => e.preventDefault()} onDrop={(e) => onDrop(e, dateStr)}
               className={`bg-white/80 rounded-[28px] border border-[#F0EBE7] flex flex-col overflow-hidden min-h-[450px] shadow-sm ${isToday ? 'ring-2 ring-[#CDE7C7]' : ''}`}>
               <div className={`p-4 text-center border-b border-[#F0EBE7] ${isToday ? 'bg-[#F6FBF6]' : ''}`}>
                 <div className="text-xs font-bold text-[#AFA4A4] uppercase mb-1">{['一', '二', '三', '四', '五', '六', '日'][idx]}</div>
@@ -253,9 +237,6 @@ const App = () => {
     );
   };
 
-  // ─────────────────────────────────────────
-  //  主界面
-  // ─────────────────────────────────────────
   return (
     <div className="min-h-screen bg-[#FFFBF8] text-[#554D4D] font-sans flex flex-col md:flex-row relative">
       <div className="fixed inset-0 pointer-events-none opacity-[0.02]"
@@ -301,21 +282,21 @@ const App = () => {
           <div className="flex-1 overflow-y-auto pr-2 space-y-4 no-scrollbar">
             {commonPlans.map(p => (
               <div key={p.id} draggable={editingCommon !== p.id}
-                onDragStart={e => { e.dataTransfer.setData('type', 'common'); e.dataTransfer.setData('payload', JSON.stringify(p)); }}
+                onDragStart={(e) => { e.dataTransfer.setData('type', 'common'); e.dataTransfer.setData('payload', JSON.stringify(p)); }}
                 className="group px-5 py-4 rounded-full border shadow-sm flex items-center gap-3 cursor-grab active:cursor-grabbing border-transparent bg-white/50 relative transition-all hover:scale-[1.02]">
                 <div className={`w-2.5 h-2.5 rounded-full ${p.color.dot}`}></div>
                 {editingCommon === p.id ? (
                   <input autoFocus className="bg-transparent outline-none w-full font-bold text-sm"
                     defaultValue={p.title}
-                    onBlur={e => { setCommonPlans((prev) => prev.map(x => x.id === p.id ? { ...x, title: e.target.value } : x)); setEditingCommon(null); }}
-                    onKeyDown={e => { if (e.key === 'Enter') e.target.blur(); }} />
+                    onBlur={(e) => { setCommonPlans((prev) => prev.map(x => x.id === p.id ? { ...x, title: e.target.value } : x)); setEditingCommon(null); }}
+                    onKeyDown={(e) => { if (e.key === 'Enter') e.target.blur(); }} />
                 ) : (
                   <span className="text-sm font-bold flex-1 truncate">{p.title}</span>
                 )}
                 <div className="flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity text-[#AFA4A4]">
-                  <button onMouseDown={e => e.stopPropagation()} onClick={() => setEditingCommon(p.id)}
+                  <button onMouseDown={(e) => e.stopPropagation()} onClick={() => setEditingCommon(p.id)}
                     className="hover:text-[#8D7D7D]"><Edit3 size={14} /></button>
-                  <button onMouseDown={e => e.stopPropagation()} onClick={() => setCommonPlans((prev) => prev.filter(x => x.id !== p.id))}
+                  <button onMouseDown={(e) => e.stopPropagation()} onClick={() => setCommonPlans((prev) => prev.filter(x => x.id !== p.id))}
                     className="hover:text-red-300"><Trash2 size={14} /></button>
                 </div>
               </div>
@@ -350,7 +331,7 @@ const App = () => {
             </h2>
           </div>
           <button onClick={() => setCurrentDate(new Date())}
-            className="px-6 py-3.5 bg-white/90 border-2 border-[#F5F2F2] rounded-[22px] font-black text-[10px] text-[#AFA4A4] shadow-sm">Today</button>
+            className="px-6 py-3.5 bg-white/90 border-2 border-[#F5F2F2] rounded-[22px] font-bold text-[10px] text-[#AFA4A4] shadow-sm">Today</button>
         </header>
         <div className="flex-1">
           {view === 'month' && <MonthView />}
@@ -368,9 +349,9 @@ const App = () => {
               <h3 className="text-2xl font-black text-[#554D4D]">{modalConfig.mode === 'add' ? '新计划' : '编辑计划'}</h3>
               <button onClick={() => setModalConfig({ ...modalConfig, isOpen: false })}><X size={18} /></button>
             </div>
-            <input autoFocus value={formTitle} onChange={e => setFormTitle(e.target.value)}
+            <input autoFocus value={formTitle} onChange={(e) => setFormTitle(e.target.value)}
               className="w-full text-xl p-6 bg-[#FAF9F9] rounded-[28px] outline-none mb-8 font-bold text-[#554D4D]"
-              onKeyDown={e => e.key === 'Enter' && saveTask()} />
+              onKeyDown={(e) => e.key === 'Enter' && saveTask()} />
             <div className="flex justify-between mb-10 no-scrollbar">
               {COLORS.map(c => (
                 <button key={c.name} onClick={() => setFormColor(c)}
@@ -385,7 +366,7 @@ const App = () => {
                 </button>
               )}
               <button onClick={saveTask}
-                className="flex-1 py-5 bg-[#CDE7C7] text-white rounded-[24px] font-black uppercase tracking-widest shadow-lg hover:brightness-95 transition-all">
+                className="flex-1 py-5 bg-[#CDE7C7] text-white rounded-[24px] font-bold uppercase tracking-widest shadow-lg hover:brightness-95 transition-all">
                 保存
               </button>
             </div>
@@ -394,7 +375,7 @@ const App = () => {
       )}
 
       <style dangerouslySetInnerHTML={{ __html: `
-        @import url('https://gs.jurieo.com/gemini/fonts-googleapis/css2?family=Quicksand:wght@600;700&display=swap');
+        @import url('https://fonts.googleapis.com/css2?family=Quicksand:wght@600;700&display=swap');
         body { font-family: 'Quicksand', sans-serif; -webkit-tap-highlight-color: transparent; }
         .no-scrollbar::-webkit-scrollbar { display: none; }
         .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
