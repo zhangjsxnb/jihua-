@@ -2,35 +2,49 @@ import React, { useState, useEffect } from 'react';
 import {
   ChevronLeft, ChevronRight, Plus, Calendar as CalendarIcon,
   Clock, LayoutGrid, Trophy, Trash2, Edit3, X, Check, LogOut, User,
-  Moon, Sun, PieChart, Save, Download, ListTodo, PlusCircle, Sparkles, Wand2, Loader2, Bookmark
+  PieChart, Save, Download, ListTodo, PlusCircle, Sparkles, Wand2, Loader2, Bookmark
 } from 'lucide-react';
 
-// --- Supabase & Gemini 环境配置 ---
+// --- Supabase 环境配置 ---
 const getEnv = (key) => {
   try { return import.meta.env[key]; } catch (e) { return null; }
 };
 const supabaseUrl = getEnv('https://ncbzklntlyiqvpmezpnk.supabase.co') || 'YOUR_SUPABASE_URL';
 const supabaseKey = getEnv('sb_publishable_OsNM8K_bgwUQhGosWMrCfA_Lt4k93DL') || 'YOUR_SUPABASE_ANON_KEY';
-const apiKey = ""; // Gemini API Key
 
-// --- Gemini API 调用封装 ---
-const callGemini = async (prompt, systemPrompt = "") => {
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`;
-  const payload = { contents: [{ parts: [{ text: prompt }] }], systemInstruction: { parts: [{ text: systemPrompt }] } };
-  const retryFetch = async (n = 5, delay = 1000) => {
-    try {
-      const res = await fetch(url, { method: 'POST', body: JSON.stringify(payload) });
-      if (!res.ok) throw new Error('API Error');
-      return await res.json();
-    } catch (e) {
-      if (n <= 1) throw e;
-      await new Promise(r => setTimeout(r, delay));
-      return retryFetch(n - 1, delay * 2);
-    }
+// ==========================================
+// 🚀 DEEPSEEK API 配置区域
+// ==========================================
+const DEEPSEEK_API_KEY = "sk-184f5a31a8e841a5abb427a82481a763"; // <--- 在这里替换你的真实 Key
+
+const callDeepSeek = async (prompt, systemPrompt = "") => {
+  const url = `https://api.deepseek.com/chat/completions`;
+  const payload = {
+    model: 'deepseek-chat',
+    messages: [
+      { role: 'system', content: systemPrompt },
+      { role: 'user', content: prompt }
+    ]
   };
-  const result = await retryFetch();
-  return result.candidates?.[0]?.content?.parts?.[0]?.text;
+  
+  try {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${DEEPSEEK_API_KEY}`
+      },
+      body: JSON.stringify(payload)
+    });
+    if (!res.ok) throw new Error('API Error');
+    const data = await res.json();
+    return data.choices[0].message.content;
+  } catch (e) {
+    console.error("DeepSeek Error:", e);
+    return null;
+  }
 };
+// ==========================================
 
 // --- 常量配置 ---
 const COLORS = [
@@ -54,10 +68,9 @@ const App = () => {
   const [commonPlans, setCommonPlans] = useState([]);
   const [modalConfig, setModalConfig] = useState({ isOpen: false, type: 'task', mode: 'add', dateStr: '', target: null });
   const [isMobileCommonOpen, setIsMobileCommonOpen] = useState(false);
-  const [isWeekCommonOpen, setIsWeekCommonOpen] = useState(false); // 周视图专属右侧面板开关
-  const [isDark, setIsDark] = useState(() => localStorage.getItem('jihua_theme') === 'dark');
+  const [isWeekCommonOpen, setIsWeekCommonOpen] = useState(false);
 
-  // ✨ 新增：全局“点击连加”状态
+  // 点击连加状态
   const [selectedPlanToPlace, setSelectedPlanToPlace] = useState(null);
 
   // --- 表单状态 ---
@@ -98,20 +111,29 @@ const App = () => {
       script.src = 'https://cdn.jsdelivr.net/npm/canvas-confetti@1.6.0/dist/confetti.browser.min.js';
       document.head.appendChild(script);
     }
+    document.body.style.backgroundColor = '#FFFBF8'; // 锁定浅色背景
   }, []);
 
-  // 彻底修复深浅主题切换（加强 DOM 操作）
-  useEffect(() => {
-    const root = document.documentElement;
-    if (isDark) {
-      root.classList.add('dark');
-      document.body.style.backgroundColor = '#121212';
-    } else {
-      root.classList.remove('dark');
-      document.body.style.backgroundColor = '#FFFBF8';
+  // --- 音效与动画 ---
+  const playDing = () => {
+    try {
+      const AudioContext = window.AudioContext || window.webkitAudioContext;
+      const ctx = new AudioContext();
+      const osc = ctx.createOscillator();
+      const gainNode = ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(880, ctx.currentTime); // 清脆的A5音
+      gainNode.gain.setValueAtTime(0, ctx.currentTime);
+      gainNode.gain.linearRampToValueAtTime(0.3, ctx.currentTime + 0.05); 
+      gainNode.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.5);
+      osc.connect(gainNode);
+      gainNode.connect(ctx.destination);
+      osc.start();
+      osc.stop(ctx.currentTime + 0.5);
+    } catch (e) {
+      console.log("Audio play failed");
     }
-    localStorage.setItem('jihua_theme', isDark ? 'dark' : 'light');
-  }, [isDark]);
+  };
 
   const triggerConfetti = (e) => {
     if (window.confetti) {
@@ -176,7 +198,10 @@ const App = () => {
 
   const toggleComplete = (id, e, currentStatus) => {
     e.stopPropagation();
-    if (!currentStatus) triggerConfetti(e);
+    if (!currentStatus) {
+      triggerConfetti(e);
+      playDing(); // <-- 触发完成音效
+    }
     syncData('tasks', 'update', id, { completed: !currentStatus }, 'jihua_tasks', setTasks);
   };
 
@@ -206,7 +231,6 @@ const App = () => {
       syncData(table, 'insert', null, fullPayload, localKey, setter);
     } else {
       syncData(table, 'update', modalConfig.target.id, payload, localKey, setter);
-      // 如果当前正在放置这个被修改的常用计划，更新它的状态
       if (selectedPlanToPlace?.id === modalConfig.target?.id && table === 'common_plans') {
         setSelectedPlanToPlace({ id: modalConfig.target.id, ...payload });
       }
@@ -226,19 +250,14 @@ const App = () => {
     setModalConfig({ ...modalConfig, isOpen: false });
   };
 
-  // ✨ 核心点击放置逻辑（取代拖拽）
   const togglePlanSelection = (plan, e) => {
     e.stopPropagation();
-    if (selectedPlanToPlace?.id === plan.id) {
-      setSelectedPlanToPlace(null); // 再次点击取消选中
-    } else {
-      setSelectedPlanToPlace(plan); // 选中准备放置
-    }
+    if (selectedPlanToPlace?.id === plan.id) setSelectedPlanToPlace(null);
+    else setSelectedPlanToPlace(plan); 
   };
 
   const handleDateClick = (dateStr) => {
     if (selectedPlanToPlace) {
-      // 放置模式：点击就加，不清空状态以支持连击
       const newTask = {
         id: Date.now().toString() + Math.random().toString(36).substring(2, 5),
         title: selectedPlanToPlace.title,
@@ -250,23 +269,28 @@ const App = () => {
       };
       syncData('tasks', 'insert', null, newTask, 'jihua_tasks', setTasks);
     } else {
-      // 普通模式：打开新增弹窗
       openModal('task', 'add', dateStr);
     }
   };
 
-  // --- ✨ Gemini 功能实现 ---
+  // --- ✨ AI 功能 ---
   const handleAiBreakdown = async () => {
     if (!formTitle.trim()) return;
+    if (DEEPSEEK_API_KEY === "在这里填入你的DeepSeek_API_KEY") {
+       alert("请先在代码第 14 行配置你的 DeepSeek API Key 才能使用 AI 功能哦！");
+       return;
+    }
     setIsAiLoading(true);
     try {
       const prompt = `请将计划“${formTitle}”拆解为3-5个具体的子步骤。`;
       const system = "你是一个效率专家。请仅返回JSON数组格式的子任务标题，不要有任何其他解释。示例: ['步骤1', '步骤2']";
-      const result = await callGemini(prompt, system);
-      const cleanedJson = result.replace(/```json|```/g, "").trim();
-      const steps = JSON.parse(cleanedJson);
-      if (Array.isArray(steps)) {
-        setFormSubtasks(steps.map(s => ({ title: typeof s === 'string' ? s : (s.title || JSON.stringify(s)), completed: false })));
+      const result = await callDeepSeek(prompt, system);
+      if(result) {
+         const cleanedJson = result.replace(/```json|```/g, "").trim();
+         const steps = JSON.parse(cleanedJson);
+         if (Array.isArray(steps)) {
+           setFormSubtasks(steps.map(s => ({ title: typeof s === 'string' ? s : (s.title || JSON.stringify(s)), completed: false })));
+         }
       }
     } catch (e) {
       console.error("AI Breakdown failed", e);
@@ -276,14 +300,18 @@ const App = () => {
   };
 
   const fetchAiCoach = async () => {
+    if (DEEPSEEK_API_KEY === "在这里填入你的DeepSeek_API_KEY") {
+       alert("请先在代码配置 DeepSeek API Key 才能使用哦！");
+       return;
+    }
     setIsCoachLoading(true);
     try {
       const dayTasks = tasks.filter(t => t.date === formatDate(currentDate));
       const titles = dayTasks.map(t => t.title).join(", ");
       const prompt = titles ? `我今天的计划有：${titles}。请给我一条鼓励或建议。` : "我今天还没有安排计划，请给我一条开启美好一天的建议。";
       const system = "你是一个温暖、富有洞察力的生活教练。请给出一句简短的反馈（20字以内），语气要可爱亲切。不要使用Markdown符号。";
-      const msg = await callGemini(prompt, system);
-      setAiCoachCoachMsg(msg);
+      const msg = await callDeepSeek(prompt, system);
+      if(msg) setAiCoachCoachMsg(msg);
     } catch (e) {
       setAiCoachCoachMsg("即使没有安排，也要记得喝水，保持好心情哦！✨");
     } finally {
@@ -291,7 +319,7 @@ const App = () => {
     }
   };
 
-  // 认证 UI 处理
+  // 认证 UI
   const handleEmailAuth = async (e) => {
     e.preventDefault(); setIsLoading(true); setAuthError('');
     try {
@@ -327,7 +355,7 @@ const App = () => {
   }
 
   // -------------------------------------------------------------
-  // 视图渲染子组件 (月/周/日/看板)
+  // 视图组件
   // -------------------------------------------------------------
 
   const MonthView = () => {
@@ -340,11 +368,11 @@ const App = () => {
     const fullCalendar = calendarDays.concat(Array(paddingDays).fill(null));
 
     return (
-      <div className="bg-white dark:bg-[#1E1E1E] rounded-[32px] border border-[#F0EBE7] dark:border-[#333] overflow-hidden shadow-sm flex flex-col transition-colors">
-        <div className="grid grid-cols-7 border-b border-[#F0EBE7] dark:border-[#333] bg-[#FAF9F9] dark:bg-[#1A1A1A]">
+      <div className="bg-white rounded-[32px] border border-[#F0EBE7] overflow-hidden shadow-sm flex flex-col">
+        <div className="grid grid-cols-7 border-b border-[#F0EBE7] bg-[#FAF9F9]">
           {['一', '二', '三', '四', '五', '六', '日'].map(d => <div key={d} className="text-center text-[11px] font-black text-[#AFA4A4] py-4">{d}</div>)}
         </div>
-        <div className="grid grid-cols-7 bg-[#F0EBE7] dark:bg-[#333] gap-px">
+        <div className="grid grid-cols-7 border-l border-t border-[#F0EBE7]">
           {fullCalendar.map((day, idx) => {
             const date = day ? new Date(currentDate.getFullYear(), currentDate.getMonth(), day) : null;
             const dateStr = date ? formatDate(date) : '';
@@ -353,14 +381,19 @@ const App = () => {
 
             return (
               <div key={idx} onClick={() => date && handleDateClick(dateStr)}
-                className={`min-h-[100px] md:min-h-[140px] p-1.5 md:p-2 transition-all flex flex-col gap-1.5 ${day ? 'bg-white dark:bg-[#1E1E1E] hover:bg-[#FAF9F9] dark:hover:bg-[#252525] cursor-pointer' : 'bg-[#FAF9F9] dark:bg-[#1A1A1A]'}`}>
-                {day && <span className={`text-[12px] md:text-[14px] font-black w-6 h-6 md:w-7 md:h-7 flex items-center justify-center rounded-full transition-colors mx-auto md:mx-0 ${isToday ? 'bg-[#CDE7C7] text-white shadow-sm' : 'text-[#8D7D7D] dark:text-[#aaa]'}`}>{day}</span>}
-                <div className="flex flex-col gap-1 overflow-y-auto no-scrollbar pb-1">
-                  {/* ✨ 月视图横条设计修复：支持换行、完整显示 */}
+                className={`min-h-[120px] md:min-h-[150px] p-0 flex flex-col border-r border-b border-[#F0EBE7] transition-all ${day ? 'bg-white hover:bg-[#FAF9F9] cursor-pointer' : 'bg-[#FAF9F9]'}`}>
+                <div className="p-1.5 flex justify-center md:justify-start">
+                   {day && <span className={`text-[12px] md:text-[14px] font-black w-6 h-6 md:w-7 md:h-7 flex items-center justify-center rounded-full ${isToday ? 'bg-[#CDE7C7] text-white shadow-sm' : 'text-[#8D7D7D]'}`}>{day}</span>}
+                </div>
+                {/* ✨ 无间隙横条设计：填满格子，带完成按钮 */}
+                <div className="flex flex-col gap-0 overflow-y-auto no-scrollbar w-full">
                   {dayTasks.map(t => (
                     <div key={t.id} onClick={(e) => { e.stopPropagation(); openModal('task', 'edit', t.date, t); }} 
-                      className={`text-[10px] md:text-[11px] px-1.5 py-1 rounded-[4px] md:rounded-[6px] w-full text-left ${t.color.bg} ${t.color.text} font-bold shadow-sm hover:brightness-95 transition-all whitespace-normal break-words leading-tight ${t.completed ? 'opacity-40 line-through grayscale' : ''}`}>
-                      {t.title}
+                      className={`group flex items-start px-1 py-[3px] md:py-1 w-full text-left ${t.color.bg} ${t.color.text} font-bold hover:brightness-95 transition-all whitespace-normal break-words leading-tight ${t.completed ? 'opacity-40 grayscale' : ''}`}>
+                      <button onClick={(e) => toggleComplete(t.id, e, t.completed)} className="shrink-0 w-3 h-3 mt-0.5 mr-1 flex items-center justify-center opacity-70 group-hover:opacity-100">
+                        {t.completed ? <Check size={10} strokeWidth={4} /> : <div className={`w-1.5 h-1.5 rounded-full ${t.color.dot}`} />}
+                      </button>
+                      <span className={`text-[9px] md:text-[10px] flex-1 ${t.completed ? 'line-through' : ''}`}>{t.title}</span>
                     </div>
                   ))}
                 </div>
@@ -379,71 +412,70 @@ const App = () => {
     
     return (
       <div className="flex flex-col gap-4 w-full">
-        {/* 周视图顶部操作区 */}
         <div className="flex justify-end mb-1">
           <button onClick={() => setIsWeekCommonOpen(!isWeekCommonOpen)} 
-            className="flex items-center gap-2 px-4 py-2 bg-white dark:bg-[#1E1E1E] rounded-full border border-[#F0EBE7] dark:border-[#333] shadow-sm text-xs font-bold text-[#AFA4A4] hover:text-[#554D4D] transition-all">
+            className="flex items-center gap-2 px-4 py-2 bg-white rounded-full border border-[#F0EBE7] shadow-sm text-xs font-bold text-[#AFA4A4] hover:text-[#554D4D] transition-all">
             <Bookmark size={14}/>
             {isWeekCommonOpen ? '隐藏常用计划' : '展开常用计划'}
           </button>
         </div>
 
         <div className="flex flex-col md:flex-row gap-4 items-start w-full transition-all duration-300">
-          {/* 左侧：垂直排版的周列表 */}
-          <div className="flex-1 bg-white dark:bg-[#1E1E1E] rounded-[32px] border border-[#F0EBE7] dark:border-[#333] overflow-hidden shadow-sm flex flex-col w-full">
+          <div className="flex-1 bg-white rounded-[32px] border border-[#F0EBE7] overflow-hidden shadow-sm flex flex-col w-full">
             {weekDays.map((date, idx) => {
               const dateStr = formatDate(date);
               const dayTasks = tasks.filter(t => t.date === dateStr);
               const isToday = formatDate(new Date()) === dateStr;
               return (
                 <div key={idx} onClick={() => handleDateClick(dateStr)}
-                  className={`flex flex-row min-h-[80px] border-b border-[#F0EBE7] dark:border-[#333] last:border-0 cursor-pointer transition-colors ${isToday ? 'bg-[#F6FBF6] dark:bg-[#1C2A1C]' : 'hover:bg-[#FAF9F9] dark:hover:bg-[#252525]'}`}>
+                  className={`flex flex-row min-h-[80px] border-b border-[#F0EBE7] last:border-0 cursor-pointer transition-colors ${isToday ? 'bg-[#F6FBF6]' : 'hover:bg-[#FAF9F9]'}`}>
                   
-                  {/* 左侧日期方块 */}
-                  <div className={`w-[70px] md:w-[90px] p-3 md:p-4 flex flex-col justify-center items-center border-r border-[#F0EBE7] dark:border-[#333] shrink-0 ${isToday ? 'text-[#5E7D5A] dark:text-[#8AA882]' : 'text-[#8D7D7D] dark:text-[#AFA4A4]'}`}>
+                  <div className={`w-[70px] md:w-[90px] p-3 md:p-4 flex flex-col justify-center items-center border-r border-[#F0EBE7] shrink-0 ${isToday ? 'text-[#5E7D5A]' : 'text-[#8D7D7D]'}`}>
                     <span className="text-xl md:text-2xl font-black leading-none">{date.getDate()}</span>
                     <span className="text-[10px] md:text-xs font-bold mt-1 uppercase">周{['一', '二', '三', '四', '五', '六', '日'][idx]}</span>
                   </div>
 
-                  {/* 右侧具体任务列表 */}
                   <div className="flex-1 p-3 md:p-4 flex flex-col gap-2 justify-center">
                     {dayTasks.map(t => (
                       <div key={t.id} onClick={(e) => { e.stopPropagation(); openModal('task', 'edit', t.date, t); }}
                         className={`flex items-start gap-2 group ${t.completed ? 'opacity-40 line-through' : ''}`}>
-                        <button onClick={(e) => toggleComplete(t.id, e, t.completed)} className="shrink-0 w-4 h-4 mt-0.5 rounded-full border border-gray-200 dark:border-gray-600 flex items-center justify-center bg-white dark:bg-[#333] shadow-sm">
-                          {t.completed ? <Check size={10} strokeWidth={4} className="text-[#CDE7C7] dark:text-[#4A6D46]"/> : <div className={`w-1.5 h-1.5 rounded-full ${t.color.dot}`} />}
+                        <button onClick={(e) => toggleComplete(t.id, e, t.completed)} className="shrink-0 w-4 h-4 mt-0.5 rounded-full border border-gray-200 flex items-center justify-center bg-white shadow-sm">
+                          {t.completed ? <Check size={10} strokeWidth={4} className="text-[#CDE7C7]"/> : <div className={`w-1.5 h-1.5 rounded-full ${t.color.dot}`} />}
                         </button>
-                        <span className={`text-xs md:text-sm font-bold px-2 py-1 rounded-[6px] ${t.color.bg} ${t.color.text} break-words whitespace-normal leading-tight shadow-sm transition-all hover:brightness-95`}>
-                          {t.title}
-                        </span>
+                        <div className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-2">
+                           <span className={`text-xs md:text-sm font-bold px-2 py-1 rounded-[6px] ${t.color.bg} ${t.color.text} break-words whitespace-normal leading-tight shadow-sm transition-all hover:brightness-95`}>
+                             {t.title}
+                           </span>
+                           {/* ✨ 显示时间 */}
+                           {t.time && <span className="text-[10px] font-bold text-[#AFA4A4] flex items-center gap-1"><Clock size={10}/> {t.time}</span>}
+                        </div>
                       </div>
                     ))}
-                    {dayTasks.length === 0 && <span className="text-[10px] text-[#D1C7C7] dark:text-[#555] font-bold">+ 点击添加计划</span>}
+                    {dayTasks.length === 0 && <span className="text-[10px] text-[#D1C7C7] font-bold">+ 点击添加计划</span>}
                   </div>
                 </div>
               );
             })}
           </div>
 
-          {/* 右侧：展开的常用计划面板 (仅在触发时显示) */}
           {isWeekCommonOpen && (
-            <div className="w-full md:w-[240px] bg-white dark:bg-[#1E1E1E] rounded-[32px] border border-[#F0EBE7] dark:border-[#333] p-5 shadow-sm flex flex-col gap-4 shrink-0 animate-in slide-in-from-right-4">
-              <div className="flex items-center justify-between border-b border-[#F0EBE7] dark:border-[#333] pb-3">
-                <h3 className="text-sm font-black text-[#554D4D] dark:text-[#EAEAEA]">常用计划库</h3>
+            <div className="w-full md:w-[240px] bg-white rounded-[32px] border border-[#F0EBE7] p-5 shadow-sm flex flex-col gap-4 shrink-0 animate-in slide-in-from-right-4">
+              <div className="flex items-center justify-between border-b border-[#F0EBE7] pb-3">
+                <h3 className="text-sm font-black text-[#554D4D]">常用计划库</h3>
                 <button onClick={() => openModal('common', 'add')} className="text-[#AFA4A4] hover:text-[#554D4D]"><Plus size={16}/></button>
               </div>
               <div className="flex flex-col gap-2 overflow-y-auto max-h-[500px] no-scrollbar">
                 {commonPlans.length === 0 && <span className="text-xs text-gray-400 py-4 text-center">暂无常用计划</span>}
                 {commonPlans.map(p => (
                   <div key={p.id} onClick={(e) => togglePlanSelection(p, e)}
-                    className={`p-3 rounded-[16px] border flex items-center gap-2 cursor-pointer transition-all ${selectedPlanToPlace?.id === p.id ? 'bg-[#F5ECBE] dark:bg-[#8D825A]/30 border-[#8D825A]' : 'bg-[#FAF9F9] dark:bg-[#252525] border-transparent hover:border-[#F0EBE7] dark:hover:border-[#555]'}`}>
+                    className={`p-3 rounded-[16px] border flex items-center gap-2 cursor-pointer transition-all ${selectedPlanToPlace?.id === p.id ? 'bg-[#F5ECBE] border-[#8D825A]' : 'bg-[#FAF9F9] border-transparent hover:border-[#F0EBE7]'}`}>
                      <div className={`w-2 h-2 rounded-full shrink-0 ${p.color.dot}`}></div>
                      <span className="text-xs font-bold truncate flex-1">{p.title}</span>
                      <button onClick={(e) => { e.stopPropagation(); openModal('common', 'edit', '', p); }} className="opacity-0 group-hover:opacity-100 text-[#AFA4A4] hover:text-[#554D4D]"><Edit3 size={12}/></button>
                   </div>
                 ))}
               </div>
-              <div className="mt-2 text-[9px] text-[#AFA4A4] bg-[#FAF9F9] dark:bg-[#252525] p-2 rounded-xl text-center">
+              <div className="mt-2 text-[9px] text-[#AFA4A4] bg-[#FAF9F9] p-2 rounded-xl text-center">
                 点击选中一个计划<br/>然后在左侧日历点击添加
               </div>
             </div>
@@ -457,19 +489,19 @@ const App = () => {
     const dateStr = formatDate(currentDate);
     const dayTasks = tasks.filter(t => t.date === dateStr);
     return (
-      <div className="max-w-3xl mx-auto w-full bg-white dark:bg-[#1E1E1E] rounded-[48px] p-8 md:p-14 shadow-sm border border-[#F0EBE7] dark:border-[#333]">
+      <div className="max-w-3xl mx-auto w-full bg-white rounded-[48px] p-8 md:p-14 shadow-sm border border-[#F0EBE7]">
         <div className="flex items-center justify-between mb-12">
           <div className="flex items-center gap-6 md:gap-8">
-            <div className="w-20 h-20 md:w-24 md:h-24 bg-[#CDE7C7] dark:bg-[#4A6D46] rounded-[28px] md:rounded-[32px] flex flex-col items-center justify-center text-white shadow-xl rotate-3">
+            <div className="w-20 h-20 md:w-24 md:h-24 bg-[#CDE7C7] rounded-[28px] md:rounded-[32px] flex flex-col items-center justify-center text-white shadow-xl rotate-3">
               <span className="text-[10px] md:text-[12px] font-black opacity-90 uppercase tracking-widest">{['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][currentDate.getDay()]}</span>
               <span className="text-3xl md:text-4xl font-black mt-1">{currentDate.getDate()}</span>
             </div>
             <div>
-              <h2 className="text-[26px] md:text-[32px] font-black text-[#554D4D] dark:text-[#EAEAEA] leading-tight">今日焦点</h2>
-              <p className="text-[#AFA4A4] dark:text-[#888] font-black text-[12px] md:text-[14px] mt-1 tracking-widest uppercase">{currentDate.getFullYear()} / {currentDate.getMonth() + 1}</p>
+              <h2 className="text-[26px] md:text-[32px] font-black text-[#554D4D] leading-tight">今日焦点</h2>
+              <p className="text-[#AFA4A4] font-black text-[12px] md:text-[14px] mt-1 tracking-widest uppercase">{currentDate.getFullYear()} / {currentDate.getMonth() + 1}</p>
             </div>
           </div>
-          <button onClick={() => handleDateClick(dateStr)} className="w-14 h-14 md:w-16 md:h-16 bg-[#F6EDE7] dark:bg-[#3A3232] text-[#8D7D7D] dark:text-[#EAEAEA] rounded-[24px] flex items-center justify-center hover:scale-110 shadow-inner transition-all">
+          <button onClick={() => handleDateClick(dateStr)} className="w-14 h-14 md:w-16 md:h-16 bg-[#F6EDE7] text-[#8D7D7D] rounded-[24px] flex items-center justify-center hover:scale-110 shadow-inner transition-all">
             <Plus size={28} strokeWidth={3} />
           </button>
         </div>
@@ -477,13 +509,21 @@ const App = () => {
         <div className="space-y-4 md:space-y-6">
           {dayTasks.map(t => (
             <div key={t.id} onClick={() => openModal('task', 'edit', t.date, t)}
-              className={`group flex flex-col p-6 md:p-8 rounded-[28px] md:rounded-[32px] border-l-[8px] md:border-l-[10px] ${t.color.border.replace('border-', 'border-l-')} ${t.color.bg.replace('bg-', 'bg-opacity-20 bg-')} dark:brightness-90 bg-white dark:bg-[#252525] shadow-sm hover:shadow-md transition-all cursor-pointer border border-y-[#F0EBE7] border-r-[#F0EBE7] dark:border-[#333]`}>
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-4 md:gap-6 flex-1">
-                  <button onClick={(e) => toggleComplete(t.id, e, t.completed)} className={`w-8 h-8 md:w-10 md:h-10 rounded-full border-2 ${t.color.border} flex items-center justify-center transition-all ${t.completed ? t.color.text.replace('text-', 'bg-') : 'bg-white dark:bg-[#1E1E1E]'}`}>
+              className={`group flex flex-col p-6 md:p-8 rounded-[28px] md:rounded-[32px] border-l-[8px] md:border-l-[10px] ${t.color.border.replace('border-', 'border-l-')} ${t.color.bg.replace('bg-', 'bg-opacity-20 bg-')} bg-white shadow-sm hover:shadow-md transition-all cursor-pointer border border-y-[#F0EBE7] border-r-[#F0EBE7]`}>
+              <div className="flex items-start justify-between">
+                <div className="flex items-start gap-4 md:gap-6 flex-1">
+                  <button onClick={(e) => toggleComplete(t.id, e, t.completed)} className={`shrink-0 w-8 h-8 md:w-10 md:h-10 rounded-full border-2 ${t.color.border} flex items-center justify-center transition-all ${t.completed ? t.color.text.replace('text-', 'bg-') : 'bg-white'}`}>
                     {t.completed ? <Check size={18} strokeWidth={4} className="text-white" /> : <div className={`w-2.5 h-2.5 md:w-3 md:h-3 rounded-full ${t.color.dot}`} />}
                   </button>
-                  <span className={`text-[18px] md:text-[22px] font-black text-[#554D4D] dark:text-[#EAEAEA] break-words whitespace-normal ${t.completed ? 'line-through opacity-30' : ''}`}>{t.title}</span>
+                  <div className="flex flex-col gap-1.5">
+                     <span className={`text-[18px] md:text-[22px] font-black text-[#554D4D] break-words whitespace-normal leading-tight ${t.completed ? 'line-through opacity-30' : ''}`}>{t.title}</span>
+                     {/* ✨ 显示时间 */}
+                     {t.time && (
+                       <span className={`inline-flex items-center gap-1.5 text-xs font-bold px-2 py-1 rounded-md w-fit ${t.completed ? 'opacity-30' : 'bg-[#FAF9F9] text-[#AFA4A4]'}`}>
+                         <Clock size={12}/> {t.time}
+                       </span>
+                     )}
+                  </div>
                 </div>
               </div>
               {t.subtasks?.length > 0 && (
@@ -508,41 +548,41 @@ const App = () => {
     const total = tasks.length, completed = tasks.filter(t => t.completed).length, rate = total === 0 ? 0 : Math.round((completed / total) * 100);
     return (
       <div className="max-w-4xl mx-auto w-full">
-        <div className="bg-white dark:bg-[#1E1E1E] p-10 md:p-12 rounded-[48px] border border-[#F0EBE7] dark:border-[#333] shadow-sm flex flex-col items-center justify-center py-16 md:py-20">
-          <div className="w-32 h-32 md:w-40 md:h-40 rounded-full border-[12px] md:border-[15px] border-[#F6EDE7] dark:border-[#333] flex items-center justify-center relative mb-8">
-            <div className="absolute inset-0 rounded-full border-[12px] md:border-[15px] border-[#CDE7C7] dark:border-[#4A6D46] transition-all duration-1000" style={{ clipPath: `polygon(0 0, 100% 0, 100% ${rate}%, 0 ${rate}%)` }}></div>
-            <span className="text-4xl md:text-5xl font-black text-[#554D4D] dark:text-[#EAEAEA]">{rate}%</span>
+        <div className="bg-white p-10 md:p-12 rounded-[48px] border border-[#F0EBE7] shadow-sm flex flex-col items-center justify-center py-16 md:py-20">
+          <div className="w-32 h-32 md:w-40 md:h-40 rounded-full border-[12px] md:border-[15px] border-[#F6EDE7] flex items-center justify-center relative mb-8">
+            <div className="absolute inset-0 rounded-full border-[12px] md:border-[15px] border-[#CDE7C7] transition-all duration-1000" style={{ clipPath: `polygon(0 0, 100% 0, 100% ${rate}%, 0 ${rate}%)` }}></div>
+            <span className="text-4xl md:text-5xl font-black text-[#554D4D]">{rate}%</span>
           </div>
-          <h2 className="text-2xl md:text-3xl font-black text-[#554D4D] dark:text-[#EAEAEA]">计划完成率</h2>
-          <p className="text-[#AFA4A4] dark:text-[#888] font-black mt-3 tracking-widest uppercase text-xs md:text-sm">Completed: {completed} / Total: {total}</p>
+          <h2 className="text-2xl md:text-3xl font-black text-[#554D4D]">计划完成率</h2>
+          <p className="text-[#AFA4A4] font-black mt-3 tracking-widest uppercase text-xs md:text-sm">Completed: {completed} / Total: {total}</p>
         </div>
       </div>
     );
   };
 
   return (
-    <div className={`${isDark ? 'dark' : ''}`}>
-      <div className="min-h-screen bg-[#FFFBF8] dark:bg-[#121212] text-[#554D4D] dark:text-[#EAEAEA] font-sans flex flex-col md:flex-row transition-colors duration-300">
+    <div>
+      <div className="min-h-screen bg-[#FFFBF8] text-[#554D4D] font-sans flex flex-col md:flex-row transition-colors duration-300">
         
-        {/* ✨ 全局连加放置模式提示条 */}
+        {/* 全局连加放置模式提示条 */}
         {selectedPlanToPlace && (
-          <div className="fixed top-20 left-1/2 -translate-x-1/2 z-50 bg-[#554D4D] dark:bg-[#EAEAEA] text-white dark:text-[#121212] px-6 py-3 rounded-full shadow-2xl flex items-center gap-4 animate-in slide-in-from-top-4">
+          <div className="fixed top-20 left-1/2 -translate-x-1/2 z-50 bg-[#554D4D] text-white px-6 py-3 rounded-full shadow-2xl flex items-center gap-4 animate-in slide-in-from-top-4">
             <span className="text-xs md:text-sm font-bold flex items-center gap-2">
               <Wand2 size={16}/> 👉 正在连续放置：「{selectedPlanToPlace.title}」
             </span>
-            <button onClick={() => setSelectedPlanToPlace(null)} className="p-1 hover:bg-white/20 dark:hover:bg-black/20 rounded-full transition-colors ml-2 border border-white/30 dark:border-black/30">
+            <button onClick={() => setSelectedPlanToPlace(null)} className="p-1 hover:bg-white/20 rounded-full transition-colors ml-2 border border-white/30">
               <X size={14}/>
             </button>
           </div>
         )}
 
         {/* 桌面端侧边栏 */}
-        <aside className="hidden md:flex w-[280px] bg-white dark:bg-[#1E1E1E] border-r border-[#F0EBE7] dark:border-[#333] py-10 px-6 flex-col gap-10 shrink-0 shadow-sm z-10">
+        <aside className="hidden md:flex w-[280px] bg-white border-r border-[#F0EBE7] py-10 px-6 flex-col gap-10 shrink-0 shadow-sm z-10">
           <div className="flex items-center gap-4">
             <img src="/pwa-512x512.png" className="w-12 h-12 rounded-[16px] shadow-sm object-cover" alt="Cat Logo" />
             <div>
               <h1 className="text-xl font-black italic leading-none">PLANNER</h1>
-              <p className="text-[9px] font-bold tracking-widest text-[#AFA4A4] uppercase mt-1">AI PRO EDITION</p>
+              <p className="text-[9px] font-bold tracking-widest text-[#AFA4A4] uppercase mt-1">DEEPSEEK EDITION</p>
             </div>
           </div>
 
@@ -554,7 +594,7 @@ const App = () => {
               { id: 'stats', icon: PieChart, label: '数据看板' },
             ].map(item => (
               <button key={item.id} onClick={() => setView(item.id)}
-                className={`flex items-center gap-4 px-5 py-4 rounded-[20px] transition-all font-bold text-[14px] ${view === item.id ? 'bg-[#F5ECBE] dark:bg-[#8D825A]/30 text-[#8D825A] dark:text-[#EAEAEA] shadow-sm' : 'text-[#AFA4A4] hover:bg-[#FAF9F9] dark:hover:bg-[#252525]'}`}>
+                className={`flex items-center gap-4 px-5 py-4 rounded-[20px] transition-all font-bold text-[14px] ${view === item.id ? 'bg-[#F5ECBE] text-[#8D825A] shadow-sm' : 'text-[#AFA4A4] hover:bg-[#FAF9F9]'}`}>
                 <item.icon size={20} strokeWidth={view === item.id ? 2.5 : 2} />
                 <span>{item.label}</span>
               </button>
@@ -569,7 +609,7 @@ const App = () => {
             <div className="flex-1 overflow-y-auto space-y-2 pr-1 no-scrollbar pb-4">
               {commonPlans.map(p => (
                 <div key={p.id} onClick={(e) => togglePlanSelection(p, e)}
-                  className={`group p-4 rounded-[24px] border flex items-center gap-3 transition-all cursor-pointer shadow-sm ${selectedPlanToPlace?.id === p.id ? 'bg-[#F5ECBE] dark:bg-[#8D825A]/30 border-[#8D825A]' : 'bg-white dark:bg-[#252525] border-[#F0EBE7] dark:border-[#333] hover:border-[#E5B5BC]'}`}>
+                  className={`group p-4 rounded-[24px] border flex items-center gap-3 transition-all cursor-pointer shadow-sm ${selectedPlanToPlace?.id === p.id ? 'bg-[#F5ECBE] border-[#8D825A]' : 'bg-white border-[#F0EBE7] hover:border-[#E5B5BC]'}`}>
                   <div className={`w-2 h-2 rounded-full ${p.color.dot}`}></div>
                   <span className="text-[13px] font-bold truncate flex-1">{p.title}</span>
                   <div className="flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
@@ -580,17 +620,16 @@ const App = () => {
             </div>
           </div>
 
-          <div className="pt-6 border-t border-[#F0EBE7] dark:border-[#333] flex justify-between items-center text-[#AFA4A4]">
+          <div className="pt-6 border-t border-[#F0EBE7] flex justify-between items-center text-[#AFA4A4]">
             <div className="flex items-center gap-2 text-[10px] font-bold max-w-[120px] truncate"><User size={14} />{isOffline ? 'OFFLINE' : user?.email?.split('@')[0]}</div>
             <div className="flex gap-3">
-              <button onClick={() => setIsDark(!isDark)} className="hover:text-[#8D7D7D] transition-colors">{isDark ? <Sun size={18}/> : <Moon size={18}/>}</button>
               <button onClick={async () => { if (supabaseClient) await supabaseClient.auth.signOut(); setShowAuth(true); }} className="hover:text-[#8D7D7D] transition-colors"><LogOut size={18}/></button>
             </div>
           </div>
         </aside>
 
         {/* 手机端底部 App 导航栏 */}
-        <nav className="md:hidden fixed bottom-0 left-0 right-0 bg-white/95 dark:bg-[#1E1E1E]/95 backdrop-blur-xl border-t border-[#F0EBE7] dark:border-[#333] z-40 px-6 py-3 pb-safe flex justify-between items-center shadow-[0_-10px_40px_rgba(0,0,0,0.04)]">
+        <nav className="md:hidden fixed bottom-0 left-0 right-0 bg-white/95 backdrop-blur-xl border-t border-[#F0EBE7] z-40 px-6 py-3 pb-safe flex justify-between items-center shadow-[0_-10px_40px_rgba(0,0,0,0.04)]">
           {[
             { id: 'day', icon: Clock, label: '今日' },
             { id: 'week', icon: LayoutGrid, label: '本周' },
@@ -612,17 +651,17 @@ const App = () => {
         <main className="flex-1 p-4 md:p-10 flex flex-col gap-6 overflow-y-auto pb-28 md:pb-10 transition-all">
           <header className="flex flex-row items-center justify-between">
             <div className="flex items-center gap-4 md:gap-8">
-               <div className="flex bg-white dark:bg-[#1E1E1E] rounded-full shadow-sm border border-[#F0EBE7] dark:border-[#333] p-1">
+               <div className="flex bg-white rounded-full shadow-sm border border-[#F0EBE7] p-1">
                   <button onClick={() => {
                     const d = new Date(currentDate);
                     if (view === 'month') d.setMonth(d.getMonth() - 1); else if (view === 'week') d.setDate(d.getDate() - 7); else d.setDate(d.getDate() - 1);
                     setCurrentDate(d);
-                  }} className="w-9 h-9 md:w-10 md:h-10 flex items-center justify-center text-[#AFA4A4] hover:bg-[#F6EDE7] dark:hover:bg-[#333] rounded-full"><ChevronLeft size={20}/></button>
+                  }} className="w-9 h-9 md:w-10 md:h-10 flex items-center justify-center text-[#AFA4A4] hover:bg-[#F6EDE7] rounded-full"><ChevronLeft size={20}/></button>
                   <button onClick={() => {
                     const d = new Date(currentDate);
                     if (view === 'month') d.setMonth(d.getMonth() + 1); else if (view === 'week') d.setDate(d.getDate() + 7); else d.setDate(d.getDate() + 1);
                     setCurrentDate(d);
-                  }} className="w-9 h-9 md:w-10 md:h-10 flex items-center justify-center text-[#AFA4A4] hover:bg-[#F6EDE7] dark:hover:bg-[#333] rounded-full"><ChevronRight size={20}/></button>
+                  }} className="w-9 h-9 md:w-10 md:h-10 flex items-center justify-center text-[#AFA4A4] hover:bg-[#F6EDE7] rounded-full"><ChevronRight size={20}/></button>
                </div>
                <h2 className="text-xl md:text-3xl font-black tracking-tight">
                  {currentDate.getFullYear()}/{String(currentDate.getMonth() + 1).padStart(2, '0')}
@@ -630,29 +669,32 @@ const App = () => {
                </h2>
             </div>
             <div className="flex items-center gap-3 z-10">
-              <button onClick={() => setIsDark(!isDark)} className="md:hidden p-2 text-[#AFA4A4] bg-white dark:bg-[#1E1E1E] border border-[#F0EBE7] dark:border-[#333] rounded-full shadow-sm hover:text-[#554D4D]">
-                {isDark ? <Sun size={14}/> : <Moon size={14}/>}
-              </button>
-              <button onClick={() => setCurrentDate(new Date())} className="px-4 py-2 md:px-6 md:py-2.5 bg-white dark:bg-[#1E1E1E] border border-[#F0EBE7] dark:border-[#333] rounded-full font-bold text-[#AFA4A4] text-xs shadow-sm hover:brightness-95 transition-all">Today</button>
+              {/* ✨ 手机端极简的重新登录按钮 */}
+              {isOffline && (
+                <button onClick={() => setShowAuth(true)} className="md:hidden p-2.5 text-[#AFA4A4] bg-white border border-[#F0EBE7] rounded-full shadow-sm hover:text-[#554D4D]">
+                  <User size={16}/>
+                </button>
+              )}
+              <button onClick={() => setCurrentDate(new Date())} className="px-4 py-2 md:px-6 md:py-2.5 bg-white border border-[#F0EBE7] rounded-full font-bold text-[#AFA4A4] text-xs shadow-sm hover:brightness-95 transition-all">Today</button>
             </div>
           </header>
 
-          {/* ✨ AI 智能教练挂件 (仅今日视图显示) */}
+          {/* ✨ AI 智能教练挂件 */}
           {view === 'day' && (
-            <div className="w-full bg-[#F6FBF6] dark:bg-[#1C2A1C] p-5 md:p-6 rounded-[28px] md:rounded-[32px] border border-[#CDE7C7] dark:border-[#4A6D46] shadow-sm animate-in slide-in-from-top-4 duration-500">
+            <div className="w-full bg-[#F6FBF6] p-5 md:p-6 rounded-[28px] md:rounded-[32px] border border-[#CDE7C7] shadow-sm animate-in slide-in-from-top-4 duration-500">
               <div className="flex items-start gap-4">
-                <div className="w-10 h-10 bg-[#CDE7C7] dark:bg-[#4A6D46] rounded-full flex items-center justify-center text-white shrink-0 mt-1 shadow-sm">
+                <div className="w-10 h-10 bg-[#CDE7C7] rounded-full flex items-center justify-center text-white shrink-0 mt-1 shadow-sm">
                   {isCoachLoading ? <Loader2 size={20} className="animate-spin" /> : <Sparkles size={20} />}
                 </div>
                 <div className="flex-1">
                   <div className="flex items-center justify-between mb-1">
-                    <h4 className="text-[11px] md:text-[12px] font-black text-[#5E7D5A] dark:text-[#8AA882] tracking-widest uppercase">✨ 每日灵感</h4>
+                    <h4 className="text-[11px] md:text-[12px] font-black text-[#5E7D5A] tracking-widest uppercase">✨ DeepSeek 灵感</h4>
                     {!aiCoachMsg && !isCoachLoading && (
                       <button onClick={fetchAiCoach} className="text-[10px] font-bold text-[#5E7D5A] underline">获取建议</button>
                     )}
                   </div>
-                  <p className="text-xs md:text-sm font-bold text-[#554D4D] dark:text-[#EAEAEA] leading-relaxed italic">
-                    {isCoachLoading ? "Gemini 正在分析你的日程..." : (aiCoachMsg || "点击右侧魔法棒，让我为你提供今日能量！✨")}
+                  <p className="text-xs md:text-sm font-bold text-[#554D4D] leading-relaxed italic">
+                    {isCoachLoading ? "DeepSeek 正在分析你的日程..." : (aiCoachMsg || "点击右侧魔法棒，让我为你提供今日能量！✨")}
                   </p>
                 </div>
                 {aiCoachMsg && (
@@ -671,21 +713,19 @@ const App = () => {
         </main>
 
         {/* ---------------- 弹窗区域 ---------------- */}
-
-        {/* 新增/编辑任务/常用弹窗 (行内嵌，防止输入法断触) */}
         {modalConfig.isOpen && (
-          <div className="fixed inset-0 bg-[#554D4D]/30 dark:bg-black/60 backdrop-blur-sm z-[100] flex items-center justify-center p-4 md:p-6"
+          <div className="fixed inset-0 bg-[#554D4D]/30 backdrop-blur-sm z-[100] flex items-center justify-center p-4 md:p-6"
             onClick={(e) => e.target === e.currentTarget && setModalConfig({ ...modalConfig, isOpen: false })}>
-            <div className="bg-white dark:bg-[#1E1E1E] rounded-[32px] md:rounded-[40px] p-6 md:p-10 w-full max-w-md shadow-2xl border border-[#F5F2F2] dark:border-[#333] animate-in zoom-in-95 max-h-[90vh] overflow-y-auto no-scrollbar">
+            <div className="bg-white rounded-[32px] md:rounded-[40px] p-6 md:p-10 w-full max-w-md shadow-2xl border border-[#F5F2F2] animate-in zoom-in-95 max-h-[90vh] overflow-y-auto no-scrollbar">
               <div className="flex justify-between items-center mb-6">
-                <h3 className="text-xl md:text-2xl font-black text-[#554D4D] dark:text-[#EAEAEA]">
+                <h3 className="text-xl md:text-2xl font-black text-[#554D4D]">
                   {modalConfig.mode === 'add' ? (modalConfig.type === 'task' ? '新计划' : '新增常用') : '修改计划'}
                 </h3>
-                <button onClick={() => setModalConfig({ ...modalConfig, isOpen: false })} className="text-[#AFA4A4] bg-[#FAF9F9] dark:bg-[#252525] p-2 rounded-full hover:text-[#554D4D]"><X size={18} /></button>
+                <button onClick={() => setModalConfig({ ...modalConfig, isOpen: false })} className="text-[#AFA4A4] bg-[#FAF9F9] p-2 rounded-full hover:text-[#554D4D]"><X size={18} /></button>
               </div>
 
               <input autoFocus value={formTitle} onChange={(e) => setFormTitle(e.target.value)} placeholder="准备做什么？"
-                className="w-full text-lg md:text-xl p-5 bg-[#FAF9F9] dark:bg-[#252525] rounded-[20px] outline-none mb-6 font-bold text-[#554D4D] dark:text-[#EAEAEA] border border-transparent focus:border-[#CDE7C7] dark:focus:border-[#4A6D46] transition-all" />
+                className="w-full text-lg md:text-xl p-5 bg-[#FAF9F9] rounded-[20px] outline-none mb-6 font-bold text-[#554D4D] border border-transparent focus:border-[#CDE7C7] transition-all" />
 
               {modalConfig.type === 'task' && (
                 <>
@@ -693,11 +733,11 @@ const App = () => {
                     <div className="flex items-center gap-2">
                       <Clock size={16} className="text-[#AFA4A4]" />
                       <input type="time" value={formTime} onChange={e => setFormTime(e.target.value)}
-                        className="bg-[#FAF9F9] dark:bg-[#252525] px-3 py-2 rounded-[12px] font-bold text-xs outline-none dark:text-[#EAEAEA]" />
+                        className="bg-[#FAF9F9] px-3 py-2 rounded-[12px] font-bold text-xs outline-none" />
                     </div>
                     <button onClick={handleAiBreakdown} disabled={isAiLoading || !formTitle.trim()}
-                      className="flex items-center gap-1.5 px-3 py-2 bg-[#F5ECBE] dark:bg-[#8D825A]/30 text-[#8D825A] dark:text-[#EAEAEA] rounded-[12px] font-bold text-xs hover:scale-105 transition-all disabled:opacity-50">
-                      {isAiLoading ? <Loader2 size={14} className="animate-spin" /> : <Wand2 size={14} />}✨ AI 拆解
+                      className="flex items-center gap-1.5 px-3 py-2 bg-[#F5ECBE] text-[#8D825A] rounded-[12px] font-bold text-xs hover:scale-105 transition-all disabled:opacity-50">
+                      {isAiLoading ? <Loader2 size={14} className="animate-spin" /> : <Wand2 size={14} />}✨ DeepSeek 拆解
                     </button>
                   </div>
 
@@ -705,13 +745,13 @@ const App = () => {
                     <div className="flex items-center gap-2 mb-2 text-[#AFA4A4] font-black text-[10px] uppercase tracking-widest"><ListTodo size={12}/> 子步骤</div>
                     <div className="space-y-2">
                       {formSubtasks.map((st, i) => (
-                        <div key={i} className="flex gap-2 items-center bg-[#FAF9F9] dark:bg-[#252525] p-2 rounded-[14px] border border-transparent hover:border-[#F0EBE7]">
+                        <div key={i} className="flex gap-2 items-center bg-[#FAF9F9] p-2 rounded-[14px] border border-transparent hover:border-[#F0EBE7]">
                           <button onClick={() => setFormSubtasks(prev => prev.map((s, idx) => idx === i ? {...s, completed: !s.completed} : s))}
-                            className={`w-5 h-5 rounded-md border-2 flex items-center justify-center shrink-0 ${st.completed ? 'bg-[#CDE7C7] border-[#CDE7C7] text-white' : 'border-[#D1C7C7] bg-white dark:bg-[#1E1E1E]'}`}>
+                            className={`w-5 h-5 rounded-md border-2 flex items-center justify-center shrink-0 ${st.completed ? 'bg-[#CDE7C7] border-[#CDE7C7] text-white' : 'border-[#D1C7C7] bg-white'}`}>
                             {st.completed && <Check size={12} strokeWidth={4}/>}
                           </button>
                           <input value={st.title} onChange={(e) => setFormSubtasks(prev => prev.map((s, idx) => idx === i ? {...s, title: e.target.value} : s))}
-                            className={`flex-1 bg-transparent outline-none text-xs font-bold dark:text-[#EAEAEA] ${st.completed ? 'line-through opacity-40' : ''}`} placeholder="描述步骤..." />
+                            className={`flex-1 bg-transparent outline-none text-xs font-bold ${st.completed ? 'line-through opacity-40' : ''}`} placeholder="描述步骤..." />
                           <button onClick={() => setFormSubtasks(prev => prev.filter((_, idx) => idx !== i))} className="text-[#D1C7C7] hover:text-red-400 p-1"><X size={14}/></button>
                         </div>
                       ))}
@@ -727,17 +767,17 @@ const App = () => {
               <div className="flex justify-between mb-8 no-scrollbar px-1">
                 {COLORS.map(c => (
                   <button key={c.name} onClick={() => setFormColor(c)}
-                    className={`w-8 h-8 md:w-10 md:h-10 rounded-full shrink-0 ${c.bg} border-[3px] transition-all ${formColor.hex === c.hex ? 'border-[#8D7D7D] dark:border-[#EAEAEA] scale-110 shadow-md' : 'border-transparent'}`} />
+                    className={`w-8 h-8 md:w-10 md:h-10 rounded-full shrink-0 ${c.bg} border-[3px] transition-all ${formColor.hex === c.hex ? 'border-[#8D7D7D] scale-110 shadow-md' : 'border-transparent'}`} />
                 ))}
               </div>
 
               <div className="flex gap-3">
                 {modalConfig.mode === 'edit' && (
-                  <button onClick={deleteAction} className="w-14 md:w-[72px] flex items-center justify-center bg-red-50 dark:bg-red-900/20 text-red-300 rounded-[20px] hover:bg-red-100 transition-colors">
+                  <button onClick={deleteAction} className="w-14 md:w-[72px] flex items-center justify-center bg-red-50 text-red-300 rounded-[20px] hover:bg-red-100 transition-colors">
                     <Trash2 size={20} />
                   </button>
                 )}
-                <button onClick={saveAction} className="flex-1 py-4 bg-[#CDE7C7] dark:bg-[#4A6D46] text-white rounded-[20px] font-black uppercase tracking-widest shadow-lg hover:brightness-95 transition-all text-xs md:text-sm">
+                <button onClick={saveAction} className="flex-1 py-4 bg-[#CDE7C7] text-white rounded-[20px] font-black uppercase tracking-widest shadow-lg hover:brightness-95 transition-all text-xs md:text-sm">
                   保存
                 </button>
               </div>
@@ -747,30 +787,30 @@ const App = () => {
 
         {/* 手机端: 常用计划专属底部面板 */}
         {isMobileCommonOpen && (
-          <div className="fixed inset-0 bg-[#554D4D]/30 dark:bg-black/60 backdrop-blur-sm z-[100] flex items-end md:hidden" onClick={(e) => e.target === e.currentTarget && setIsMobileCommonOpen(false)}>
-            <div className="bg-white dark:bg-[#1E1E1E] w-full rounded-t-[32px] p-6 pb-12 max-h-[80vh] flex flex-col animate-in slide-in-from-bottom-full duration-300">
+          <div className="fixed inset-0 bg-[#554D4D]/30 backdrop-blur-sm z-[100] flex items-end md:hidden" onClick={(e) => e.target === e.currentTarget && setIsMobileCommonOpen(false)}>
+            <div className="bg-white w-full rounded-t-[32px] p-6 pb-12 max-h-[80vh] flex flex-col animate-in slide-in-from-bottom-full duration-300">
               <div className="flex justify-between items-center mb-6">
-                <h3 className="font-black text-[#554D4D] dark:text-[#EAEAEA] text-lg">常用计划库</h3>
+                <h3 className="font-black text-[#554D4D] text-lg">常用计划库</h3>
                 <div className="flex gap-2">
-                  <button onClick={() => openModal('common', 'add')} className="p-2 bg-[#F6EDE7] dark:bg-[#333] rounded-full text-[#8D7D7D] dark:text-[#EAEAEA]"><Plus size={16} strokeWidth={3}/></button>
-                  <button onClick={() => setIsMobileCommonOpen(false)} className="p-2 bg-[#FAF9F9] dark:bg-[#252525] rounded-full text-[#AFA4A4]"><X size={16} strokeWidth={3}/></button>
+                  <button onClick={() => openModal('common', 'add')} className="p-2 bg-[#F6EDE7] rounded-full text-[#8D7D7D]"><Plus size={16} strokeWidth={3}/></button>
+                  <button onClick={() => setIsMobileCommonOpen(false)} className="p-2 bg-[#FAF9F9] rounded-full text-[#AFA4A4]"><X size={16} strokeWidth={3}/></button>
                 </div>
               </div>
               <div className="overflow-y-auto space-y-3 no-scrollbar flex-1">
                 {commonPlans.length === 0 ? <p className="text-center text-xs text-[#AFA4A4] py-10 font-bold">空空如也，点右上角添加吧</p> : null}
                 {commonPlans.map(p => (
                   <div key={p.id} onClick={(e) => { togglePlanSelection(p, e); setIsMobileCommonOpen(false); }}
-                    className={`flex items-center justify-between p-4 rounded-[20px] border shadow-sm active:scale-95 transition-all cursor-pointer ${selectedPlanToPlace?.id === p.id ? 'bg-[#F5ECBE] border-[#8D825A] dark:bg-[#8D825A]/30' : 'bg-[#FAF9F9] dark:bg-[#252525] border-[#F0EBE7] dark:border-[#333]'}`}>
+                    className={`flex items-center justify-between p-4 rounded-[20px] border shadow-sm active:scale-95 transition-all cursor-pointer ${selectedPlanToPlace?.id === p.id ? 'bg-[#F5ECBE] border-[#8D825A]' : 'bg-[#FAF9F9] border-[#F0EBE7]'}`}>
                     <div className="flex items-center gap-3 flex-1 overflow-hidden">
                       <div className={`w-3 h-3 rounded-full shrink-0 ${p.color.dot}`}></div>
-                      <span className="font-bold text-[#554D4D] dark:text-[#EAEAEA] text-sm truncate">{p.title}</span>
+                      <span className="font-bold text-[#554D4D] text-sm truncate">{p.title}</span>
                       {selectedPlanToPlace?.id === p.id ? (
                         <span className="text-[10px] text-white bg-[#554D4D] px-3 py-1 rounded-full shadow-sm ml-auto shrink-0 animate-pulse">取消选中</span>
                       ) : (
-                        <span className="text-[10px] text-[#AFA4A4] bg-white dark:bg-[#1E1E1E] border border-gray-100 dark:border-gray-800 px-3 py-1 rounded-full shadow-sm ml-auto shrink-0">点击选中</span>
+                        <span className="text-[10px] text-[#AFA4A4] bg-white border border-gray-100 px-3 py-1 rounded-full shadow-sm ml-auto shrink-0">点击选中</span>
                       )}
                     </div>
-                    <div className="flex items-center gap-2 pl-3 ml-2 border-l border-[#EFEBE7] dark:border-[#444]">
+                    <div className="flex items-center gap-2 pl-3 ml-2 border-l border-[#EFEBE7]">
                       <button onClick={(e) => { e.stopPropagation(); openModal('common', 'edit', '', p); }} className="text-[#AFA4A4] hover:text-[#8D7D7D] p-1"><Edit3 size={16}/></button>
                     </div>
                   </div>
