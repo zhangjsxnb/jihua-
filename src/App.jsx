@@ -52,11 +52,13 @@ const App = () => {
   const [currentDate, setCurrentDate] = useState(new Date());
   const [tasks, setTasks] = useState([]);
   const [commonPlans, setCommonPlans] = useState([]);
-  const [templates, setTemplates] = useState([]);
   const [modalConfig, setModalConfig] = useState({ isOpen: false, type: 'task', mode: 'add', dateStr: '', target: null });
-  const [templateModal, setTemplateModal] = useState({ isOpen: false, mode: 'save' });
-  const [isMobileCommonOpen, setIsMobileCommonOpen] = useState(false); // 手机端常用计划面板状态
+  const [isMobileCommonOpen, setIsMobileCommonOpen] = useState(false);
+  const [isWeekCommonOpen, setIsWeekCommonOpen] = useState(false); // 周视图专属右侧面板开关
   const [isDark, setIsDark] = useState(() => localStorage.getItem('jihua_theme') === 'dark');
+
+  // ✨ 新增：全局“点击连加”状态
+  const [selectedPlanToPlace, setSelectedPlanToPlace] = useState(null);
 
   // --- 表单状态 ---
   const [formTitle, setFormTitle] = useState('');
@@ -64,7 +66,6 @@ const App = () => {
   const [formTime, setFormTime] = useState('');
   const [formSubtasks, setFormSubtasks] = useState([]);
   const [isAiLoading, setIsAiLoading] = useState(false);
-  const [templateTitle, setTemplateTitle] = useState('');
 
   // --- AI 灵感状态 ---
   const [aiCoachMsg, setAiCoachCoachMsg] = useState("");
@@ -99,13 +100,15 @@ const App = () => {
     }
   }, []);
 
-  // 修复主题切换
+  // 彻底修复深浅主题切换（加强 DOM 操作）
   useEffect(() => {
     const root = document.documentElement;
     if (isDark) {
       root.classList.add('dark');
+      document.body.style.backgroundColor = '#121212';
     } else {
       root.classList.remove('dark');
+      document.body.style.backgroundColor = '#FFFBF8';
     }
     localStorage.setItem('jihua_theme', isDark ? 'dark' : 'light');
   }, [isDark]);
@@ -136,7 +139,6 @@ const App = () => {
     if (isOffline || !user || !supabaseClient || showAuth) {
       setTasks(JSON.parse(localStorage.getItem('jihua_tasks') || '[]'));
       setCommonPlans(JSON.parse(localStorage.getItem('jihua_commonPlans') || '[]').length > 0 ? JSON.parse(localStorage.getItem('jihua_commonPlans')) : DEFAULT_COMMON_PLANS);
-      setTemplates(JSON.parse(localStorage.getItem('jihua_templates') || '[]'));
       return;
     }
     const fetchData = async (table, setter, localKey) => {
@@ -144,7 +146,6 @@ const App = () => {
       if (data && !error) { setter(data); localStorage.setItem(localKey, JSON.stringify(data)); }
     };
     fetchData('tasks', setTasks, 'jihua_tasks');
-    fetchData('templates', setTemplates, 'jihua_templates');
     fetchData('common_plans', (d) => d.length > 0 ? setCommonPlans(d) : setCommonPlans(DEFAULT_COMMON_PLANS), 'jihua_commonPlans');
   }, [user, showAuth, isOffline, supabaseClient]);
 
@@ -205,6 +206,10 @@ const App = () => {
       syncData(table, 'insert', null, fullPayload, localKey, setter);
     } else {
       syncData(table, 'update', modalConfig.target.id, payload, localKey, setter);
+      // 如果当前正在放置这个被修改的常用计划，更新它的状态
+      if (selectedPlanToPlace?.id === modalConfig.target?.id && table === 'common_plans') {
+        setSelectedPlanToPlace({ id: modalConfig.target.id, ...payload });
+      }
     }
     setModalConfig({ ...modalConfig, isOpen: false });
   };
@@ -215,28 +220,39 @@ const App = () => {
     const localKey = isTask ? 'jihua_tasks' : 'jihua_commonPlans';
     const setter = isTask ? setTasks : setCommonPlans;
     syncData(table, 'delete', modalConfig.target.id, null, localKey, setter);
+    if (table === 'common_plans' && selectedPlanToPlace?.id === modalConfig.target.id) {
+      setSelectedPlanToPlace(null);
+    }
     setModalConfig({ ...modalConfig, isOpen: false });
   };
 
-  const onDrop = (e, targetDateStr) => {
-    e.preventDefault();
-    const type = e.dataTransfer.getData('type');
-    if (!type) return;
-    const payload = JSON.parse(e.dataTransfer.getData('payload'));
-    if (type === 'common') {
-      const newTask = { id: Date.now().toString(), title: payload.title, date: targetDateStr, color: payload.color, completed: false, time: '', subtasks: [] };
-      syncData('tasks', 'insert', null, newTask, 'jihua_tasks', setTasks);
-    } else if (type === 'task') {
-      syncData('tasks', 'update', payload.id, { date: targetDateStr }, 'jihua_tasks', setTasks);
+  // ✨ 核心点击放置逻辑（取代拖拽）
+  const togglePlanSelection = (plan, e) => {
+    e.stopPropagation();
+    if (selectedPlanToPlace?.id === plan.id) {
+      setSelectedPlanToPlace(null); // 再次点击取消选中
+    } else {
+      setSelectedPlanToPlace(plan); // 选中准备放置
     }
   };
 
-  // 手机端快捷添加常用计划到今天
-  const addCommonToToday = (plan) => {
-    const todayStr = formatDate(new Date());
-    const newTask = { id: Date.now().toString(), title: plan.title, date: todayStr, color: plan.color, completed: false, time: '', subtasks: [] };
-    syncData('tasks', 'insert', null, newTask, 'jihua_tasks', setTasks);
-    setIsMobileCommonOpen(false);
+  const handleDateClick = (dateStr) => {
+    if (selectedPlanToPlace) {
+      // 放置模式：点击就加，不清空状态以支持连击
+      const newTask = {
+        id: Date.now().toString() + Math.random().toString(36).substring(2, 5),
+        title: selectedPlanToPlace.title,
+        date: dateStr,
+        color: selectedPlanToPlace.color,
+        completed: false,
+        time: '',
+        subtasks: []
+      };
+      syncData('tasks', 'insert', null, newTask, 'jihua_tasks', setTasks);
+    } else {
+      // 普通模式：打开新增弹窗
+      openModal('task', 'add', dateStr);
+    }
   };
 
   // --- ✨ Gemini 功能实现 ---
@@ -336,16 +352,14 @@ const App = () => {
             const isToday = day && formatDate(new Date()) === dateStr;
 
             return (
-              <div key={idx} onDragOver={(e) => e.preventDefault()} onDrop={(e) => date && onDrop(e, dateStr)}
-                onClick={() => date && openModal('task', 'add', dateStr)}
-                className={`min-h-[120px] md:min-h-[150px] p-1.5 md:p-2 transition-all flex flex-col gap-1.5 ${day ? 'bg-white dark:bg-[#1E1E1E] hover:bg-[#FAF9F9] dark:hover:bg-[#252525] cursor-pointer' : 'bg-[#FAF9F9] dark:bg-[#1A1A1A]'}`}>
-                {day && <span className={`text-[12px] md:text-[14px] font-black w-7 h-7 flex items-center justify-center rounded-full transition-colors mx-auto md:mx-0 ${isToday ? 'bg-[#CDE7C7] text-white shadow-sm' : 'text-[#8D7D7D] dark:text-[#aaa]'}`}>{day}</span>}
-                <div className="flex flex-col gap-1 overflow-y-auto no-scrollbar">
-                  {/* 月视图横条设计 */}
+              <div key={idx} onClick={() => date && handleDateClick(dateStr)}
+                className={`min-h-[100px] md:min-h-[140px] p-1.5 md:p-2 transition-all flex flex-col gap-1.5 ${day ? 'bg-white dark:bg-[#1E1E1E] hover:bg-[#FAF9F9] dark:hover:bg-[#252525] cursor-pointer' : 'bg-[#FAF9F9] dark:bg-[#1A1A1A]'}`}>
+                {day && <span className={`text-[12px] md:text-[14px] font-black w-6 h-6 md:w-7 md:h-7 flex items-center justify-center rounded-full transition-colors mx-auto md:mx-0 ${isToday ? 'bg-[#CDE7C7] text-white shadow-sm' : 'text-[#8D7D7D] dark:text-[#aaa]'}`}>{day}</span>}
+                <div className="flex flex-col gap-1 overflow-y-auto no-scrollbar pb-1">
+                  {/* ✨ 月视图横条设计修复：支持换行、完整显示 */}
                   {dayTasks.map(t => (
                     <div key={t.id} onClick={(e) => { e.stopPropagation(); openModal('task', 'edit', t.date, t); }} 
-                      draggable onDragStart={(e) => { e.stopPropagation(); e.dataTransfer.setData('type', 'task'); e.dataTransfer.setData('payload', JSON.stringify(t)); }}
-                      className={`text-[9px] md:text-[11px] px-1.5 py-1 rounded-[6px] md:rounded-[8px] w-full text-left ${t.color.bg} ${t.color.text} font-bold shadow-sm hover:brightness-95 transition-all truncate ${t.completed ? 'opacity-40 line-through grayscale' : ''}`}>
+                      className={`text-[10px] md:text-[11px] px-1.5 py-1 rounded-[4px] md:rounded-[6px] w-full text-left ${t.color.bg} ${t.color.text} font-bold shadow-sm hover:brightness-95 transition-all whitespace-normal break-words leading-tight ${t.completed ? 'opacity-40 line-through grayscale' : ''}`}>
                       {t.title}
                     </div>
                   ))}
@@ -362,37 +376,79 @@ const App = () => {
     const day = currentDate.getDay();
     const diff = currentDate.getDate() - (day === 0 ? 6 : day - 1);
     const weekDays = [...Array(7).keys()].map(i => { const d = new Date(currentDate); d.setDate(diff + i); return d; });
+    
     return (
-      <div className="flex flex-col md:grid md:grid-cols-7 gap-4">
-        {weekDays.map((date, idx) => {
-          const dateStr = formatDate(date);
-          const dayTasks = tasks.filter(t => t.date === dateStr);
-          const isToday = formatDate(new Date()) === dateStr;
-          return (
-            <div key={idx} onDragOver={(e) => e.preventDefault()} onDrop={(e) => onDrop(e, dateStr)}
-              className={`bg-white dark:bg-[#1E1E1E] rounded-[24px] border border-[#F0EBE7] dark:border-[#333] flex flex-col p-4 shadow-sm transition-all h-auto ${isToday ? 'ring-2 ring-[#CDE7C7] dark:ring-[#4A6D46]/50' : ''}`}>
-              <div className="flex md:flex-col justify-between items-center md:items-start border-b border-[#F0EBE7] dark:border-[#333] pb-3 md:pb-4 mb-3">
-                <span className="text-[12px] font-bold text-[#AFA4A4] uppercase">周{['一', '二', '三', '四', '五', '六', '日'][idx]}</span>
-                <span className={`text-2xl font-black ${isToday ? 'text-[#839E7B] dark:text-[#8AA882]' : 'text-[#554D4D] dark:text-[#EAEAEA]'}`}>{date.getDate()}</span>
+      <div className="flex flex-col gap-4 w-full">
+        {/* 周视图顶部操作区 */}
+        <div className="flex justify-end mb-1">
+          <button onClick={() => setIsWeekCommonOpen(!isWeekCommonOpen)} 
+            className="flex items-center gap-2 px-4 py-2 bg-white dark:bg-[#1E1E1E] rounded-full border border-[#F0EBE7] dark:border-[#333] shadow-sm text-xs font-bold text-[#AFA4A4] hover:text-[#554D4D] transition-all">
+            <Bookmark size={14}/>
+            {isWeekCommonOpen ? '隐藏常用计划' : '展开常用计划'}
+          </button>
+        </div>
+
+        <div className="flex flex-col md:flex-row gap-4 items-start w-full transition-all duration-300">
+          {/* 左侧：垂直排版的周列表 */}
+          <div className="flex-1 bg-white dark:bg-[#1E1E1E] rounded-[32px] border border-[#F0EBE7] dark:border-[#333] overflow-hidden shadow-sm flex flex-col w-full">
+            {weekDays.map((date, idx) => {
+              const dateStr = formatDate(date);
+              const dayTasks = tasks.filter(t => t.date === dateStr);
+              const isToday = formatDate(new Date()) === dateStr;
+              return (
+                <div key={idx} onClick={() => handleDateClick(dateStr)}
+                  className={`flex flex-row min-h-[80px] border-b border-[#F0EBE7] dark:border-[#333] last:border-0 cursor-pointer transition-colors ${isToday ? 'bg-[#F6FBF6] dark:bg-[#1C2A1C]' : 'hover:bg-[#FAF9F9] dark:hover:bg-[#252525]'}`}>
+                  
+                  {/* 左侧日期方块 */}
+                  <div className={`w-[70px] md:w-[90px] p-3 md:p-4 flex flex-col justify-center items-center border-r border-[#F0EBE7] dark:border-[#333] shrink-0 ${isToday ? 'text-[#5E7D5A] dark:text-[#8AA882]' : 'text-[#8D7D7D] dark:text-[#AFA4A4]'}`}>
+                    <span className="text-xl md:text-2xl font-black leading-none">{date.getDate()}</span>
+                    <span className="text-[10px] md:text-xs font-bold mt-1 uppercase">周{['一', '二', '三', '四', '五', '六', '日'][idx]}</span>
+                  </div>
+
+                  {/* 右侧具体任务列表 */}
+                  <div className="flex-1 p-3 md:p-4 flex flex-col gap-2 justify-center">
+                    {dayTasks.map(t => (
+                      <div key={t.id} onClick={(e) => { e.stopPropagation(); openModal('task', 'edit', t.date, t); }}
+                        className={`flex items-start gap-2 group ${t.completed ? 'opacity-40 line-through' : ''}`}>
+                        <button onClick={(e) => toggleComplete(t.id, e, t.completed)} className="shrink-0 w-4 h-4 mt-0.5 rounded-full border border-gray-200 dark:border-gray-600 flex items-center justify-center bg-white dark:bg-[#333] shadow-sm">
+                          {t.completed ? <Check size={10} strokeWidth={4} className="text-[#CDE7C7] dark:text-[#4A6D46]"/> : <div className={`w-1.5 h-1.5 rounded-full ${t.color.dot}`} />}
+                        </button>
+                        <span className={`text-xs md:text-sm font-bold px-2 py-1 rounded-[6px] ${t.color.bg} ${t.color.text} break-words whitespace-normal leading-tight shadow-sm transition-all hover:brightness-95`}>
+                          {t.title}
+                        </span>
+                      </div>
+                    ))}
+                    {dayTasks.length === 0 && <span className="text-[10px] text-[#D1C7C7] dark:text-[#555] font-bold">+ 点击添加计划</span>}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          {/* 右侧：展开的常用计划面板 (仅在触发时显示) */}
+          {isWeekCommonOpen && (
+            <div className="w-full md:w-[240px] bg-white dark:bg-[#1E1E1E] rounded-[32px] border border-[#F0EBE7] dark:border-[#333] p-5 shadow-sm flex flex-col gap-4 shrink-0 animate-in slide-in-from-right-4">
+              <div className="flex items-center justify-between border-b border-[#F0EBE7] dark:border-[#333] pb-3">
+                <h3 className="text-sm font-black text-[#554D4D] dark:text-[#EAEAEA]">常用计划库</h3>
+                <button onClick={() => openModal('common', 'add')} className="text-[#AFA4A4] hover:text-[#554D4D]"><Plus size={16}/></button>
               </div>
-              <div className="flex flex-col gap-2 cursor-pointer" onClick={() => openModal('task', 'add', dateStr)}>
-                {dayTasks.map(t => (
-                  <div key={t.id} onClick={(e) => { e.stopPropagation(); openModal('task', 'edit', t.date, t); }}
-                    className={`flex flex-col gap-1.5 p-3 rounded-[16px] border ${t.color.border} ${t.color.bg} ${t.color.text} dark:brightness-75 cursor-pointer hover:shadow-md transition-all shadow-sm ${t.completed ? 'opacity-40' : ''}`}>
-                    <div className="flex items-start gap-2">
-                      <button onClick={(e) => toggleComplete(t.id, e, t.completed)} className="w-4 h-4 rounded-full border border-white/50 shrink-0 mt-0.5 flex items-center justify-center bg-white shadow-sm">
-                        {t.completed ? <Check size={10} strokeWidth={4} /> : <div className={`w-1.5 h-1.5 rounded-full ${t.color.dot}`} />}
-                      </button>
-                      <span className={`text-[12px] font-bold leading-snug break-words ${t.completed ? 'line-through' : ''}`}>{t.title}</span>
-                    </div>
-                    {t.time && <div className="ml-6 flex items-center gap-1 text-[9px] font-bold opacity-70"><Clock size={10}/> {t.time}</div>}
+              <div className="flex flex-col gap-2 overflow-y-auto max-h-[500px] no-scrollbar">
+                {commonPlans.length === 0 && <span className="text-xs text-gray-400 py-4 text-center">暂无常用计划</span>}
+                {commonPlans.map(p => (
+                  <div key={p.id} onClick={(e) => togglePlanSelection(p, e)}
+                    className={`p-3 rounded-[16px] border flex items-center gap-2 cursor-pointer transition-all ${selectedPlanToPlace?.id === p.id ? 'bg-[#F5ECBE] dark:bg-[#8D825A]/30 border-[#8D825A]' : 'bg-[#FAF9F9] dark:bg-[#252525] border-transparent hover:border-[#F0EBE7] dark:hover:border-[#555]'}`}>
+                     <div className={`w-2 h-2 rounded-full shrink-0 ${p.color.dot}`}></div>
+                     <span className="text-xs font-bold truncate flex-1">{p.title}</span>
+                     <button onClick={(e) => { e.stopPropagation(); openModal('common', 'edit', '', p); }} className="opacity-0 group-hover:opacity-100 text-[#AFA4A4] hover:text-[#554D4D]"><Edit3 size={12}/></button>
                   </div>
                 ))}
-                {dayTasks.length === 0 && <div className="text-center py-4 text-[10px] text-[#D1C7C7] font-bold tracking-widest">+ 点击添加</div>}
+              </div>
+              <div className="mt-2 text-[9px] text-[#AFA4A4] bg-[#FAF9F9] dark:bg-[#252525] p-2 rounded-xl text-center">
+                点击选中一个计划<br/>然后在左侧日历点击添加
               </div>
             </div>
-          );
-        })}
+          )}
+        </div>
       </div>
     );
   };
@@ -413,7 +469,7 @@ const App = () => {
               <p className="text-[#AFA4A4] dark:text-[#888] font-black text-[12px] md:text-[14px] mt-1 tracking-widest uppercase">{currentDate.getFullYear()} / {currentDate.getMonth() + 1}</p>
             </div>
           </div>
-          <button onClick={() => openModal('task', 'add', dateStr)} className="w-14 h-14 md:w-16 md:h-16 bg-[#F6EDE7] dark:bg-[#3A3232] text-[#8D7D7D] dark:text-[#EAEAEA] rounded-[24px] flex items-center justify-center hover:scale-110 shadow-inner transition-all">
+          <button onClick={() => handleDateClick(dateStr)} className="w-14 h-14 md:w-16 md:h-16 bg-[#F6EDE7] dark:bg-[#3A3232] text-[#8D7D7D] dark:text-[#EAEAEA] rounded-[24px] flex items-center justify-center hover:scale-110 shadow-inner transition-all">
             <Plus size={28} strokeWidth={3} />
           </button>
         </div>
@@ -427,7 +483,7 @@ const App = () => {
                   <button onClick={(e) => toggleComplete(t.id, e, t.completed)} className={`w-8 h-8 md:w-10 md:h-10 rounded-full border-2 ${t.color.border} flex items-center justify-center transition-all ${t.completed ? t.color.text.replace('text-', 'bg-') : 'bg-white dark:bg-[#1E1E1E]'}`}>
                     {t.completed ? <Check size={18} strokeWidth={4} className="text-white" /> : <div className={`w-2.5 h-2.5 md:w-3 md:h-3 rounded-full ${t.color.dot}`} />}
                   </button>
-                  <span className={`text-[18px] md:text-[22px] font-black text-[#554D4D] dark:text-[#EAEAEA] ${t.completed ? 'line-through opacity-30' : ''}`}>{t.title}</span>
+                  <span className={`text-[18px] md:text-[22px] font-black text-[#554D4D] dark:text-[#EAEAEA] break-words whitespace-normal ${t.completed ? 'line-through opacity-30' : ''}`}>{t.title}</span>
                 </div>
               </div>
               {t.subtasks?.length > 0 && (
@@ -468,8 +524,20 @@ const App = () => {
     <div className={`${isDark ? 'dark' : ''}`}>
       <div className="min-h-screen bg-[#FFFBF8] dark:bg-[#121212] text-[#554D4D] dark:text-[#EAEAEA] font-sans flex flex-col md:flex-row transition-colors duration-300">
         
+        {/* ✨ 全局连加放置模式提示条 */}
+        {selectedPlanToPlace && (
+          <div className="fixed top-20 left-1/2 -translate-x-1/2 z-50 bg-[#554D4D] dark:bg-[#EAEAEA] text-white dark:text-[#121212] px-6 py-3 rounded-full shadow-2xl flex items-center gap-4 animate-in slide-in-from-top-4">
+            <span className="text-xs md:text-sm font-bold flex items-center gap-2">
+              <Wand2 size={16}/> 👉 正在连续放置：「{selectedPlanToPlace.title}」
+            </span>
+            <button onClick={() => setSelectedPlanToPlace(null)} className="p-1 hover:bg-white/20 dark:hover:bg-black/20 rounded-full transition-colors ml-2 border border-white/30 dark:border-black/30">
+              <X size={14}/>
+            </button>
+          </div>
+        )}
+
         {/* 桌面端侧边栏 */}
-        <aside className="hidden md:flex w-[280px] bg-white dark:bg-[#1E1E1E] border-r border-[#F0EBE7] dark:border-[#333] py-10 px-6 flex-col gap-10 shrink-0 shadow-sm">
+        <aside className="hidden md:flex w-[280px] bg-white dark:bg-[#1E1E1E] border-r border-[#F0EBE7] dark:border-[#333] py-10 px-6 flex-col gap-10 shrink-0 shadow-sm z-10">
           <div className="flex items-center gap-4">
             <img src="/pwa-512x512.png" className="w-12 h-12 rounded-[16px] shadow-sm object-cover" alt="Cat Logo" />
             <div>
@@ -500,12 +568,12 @@ const App = () => {
             </div>
             <div className="flex-1 overflow-y-auto space-y-2 pr-1 no-scrollbar pb-4">
               {commonPlans.map(p => (
-                <div key={p.id} draggable onDragStart={(e) => { e.dataTransfer.setData('type', 'common'); e.dataTransfer.setData('payload', JSON.stringify(p)); }}
-                  className="group p-4 rounded-[24px] bg-white dark:bg-[#252525] border border-[#F0EBE7] dark:border-[#333] flex items-center gap-3 hover:border-[#E5B5BC] transition-all cursor-grab shadow-sm">
+                <div key={p.id} onClick={(e) => togglePlanSelection(p, e)}
+                  className={`group p-4 rounded-[24px] border flex items-center gap-3 transition-all cursor-pointer shadow-sm ${selectedPlanToPlace?.id === p.id ? 'bg-[#F5ECBE] dark:bg-[#8D825A]/30 border-[#8D825A]' : 'bg-white dark:bg-[#252525] border-[#F0EBE7] dark:border-[#333] hover:border-[#E5B5BC]'}`}>
                   <div className={`w-2 h-2 rounded-full ${p.color.dot}`}></div>
                   <span className="text-[13px] font-bold truncate flex-1">{p.title}</span>
                   <div className="flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                     <button onClick={() => openModal('common', 'edit', '', p)} className="p-1 text-[#AFA4A4] hover:text-[#8D7D7D]"><Edit3 size={14}/></button>
+                     <button onClick={(e) => { e.stopPropagation(); openModal('common', 'edit', '', p); }} className="p-1 text-[#AFA4A4] hover:text-[#8D7D7D]"><Edit3 size={14}/></button>
                   </div>
                 </div>
               ))}
@@ -534,7 +602,7 @@ const App = () => {
               <span className="text-[10px] font-black">{item.label}</span>
             </button>
           ))}
-          <button onClick={() => setIsMobileCommonOpen(true)} className="flex flex-col items-center gap-1.5 text-[#AFA4A4] hover:text-[#8D7D7D]">
+          <button onClick={() => setIsMobileCommonOpen(true)} className={`flex flex-col items-center gap-1.5 transition-all ${selectedPlanToPlace ? 'text-[#839E7B] scale-110 animate-pulse' : 'text-[#AFA4A4] hover:text-[#8D7D7D]'}`}>
              <Bookmark size={22} strokeWidth={2} />
              <span className="text-[10px] font-black">常用</span>
           </button>
@@ -561,8 +629,8 @@ const App = () => {
                  {view === 'day' && <span className="text-[#AFA4A4]"> / {currentDate.getDate()}</span>}
                </h2>
             </div>
-            <div className="flex items-center gap-3">
-              <button onClick={() => setIsDark(!isDark)} className="md:hidden p-2 text-[#AFA4A4] bg-white dark:bg-[#1E1E1E] border border-[#F0EBE7] dark:border-[#333] rounded-full shadow-sm">
+            <div className="flex items-center gap-3 z-10">
+              <button onClick={() => setIsDark(!isDark)} className="md:hidden p-2 text-[#AFA4A4] bg-white dark:bg-[#1E1E1E] border border-[#F0EBE7] dark:border-[#333] rounded-full shadow-sm hover:text-[#554D4D]">
                 {isDark ? <Sun size={14}/> : <Moon size={14}/>}
               </button>
               <button onClick={() => setCurrentDate(new Date())} className="px-4 py-2 md:px-6 md:py-2.5 bg-white dark:bg-[#1E1E1E] border border-[#F0EBE7] dark:border-[#333] rounded-full font-bold text-[#AFA4A4] text-xs shadow-sm hover:brightness-95 transition-all">Today</button>
@@ -691,18 +759,25 @@ const App = () => {
               <div className="overflow-y-auto space-y-3 no-scrollbar flex-1">
                 {commonPlans.length === 0 ? <p className="text-center text-xs text-[#AFA4A4] py-10 font-bold">空空如也，点右上角添加吧</p> : null}
                 {commonPlans.map(p => (
-                  <div key={p.id} draggable onDragStart={(e) => e.dataTransfer.setData('type', 'common') || e.dataTransfer.setData('payload', JSON.stringify(p))}
-                    className="flex items-center justify-between p-4 rounded-[20px] bg-[#FAF9F9] dark:bg-[#252525] border border-[#F0EBE7] dark:border-[#333] shadow-sm active:scale-95 transition-transform">
-                    <div className="flex items-center gap-3 flex-1 overflow-hidden" onClick={() => addCommonToToday(p)}>
+                  <div key={p.id} onClick={(e) => { togglePlanSelection(p, e); setIsMobileCommonOpen(false); }}
+                    className={`flex items-center justify-between p-4 rounded-[20px] border shadow-sm active:scale-95 transition-all cursor-pointer ${selectedPlanToPlace?.id === p.id ? 'bg-[#F5ECBE] border-[#8D825A] dark:bg-[#8D825A]/30' : 'bg-[#FAF9F9] dark:bg-[#252525] border-[#F0EBE7] dark:border-[#333]'}`}>
+                    <div className="flex items-center gap-3 flex-1 overflow-hidden">
                       <div className={`w-3 h-3 rounded-full shrink-0 ${p.color.dot}`}></div>
                       <span className="font-bold text-[#554D4D] dark:text-[#EAEAEA] text-sm truncate">{p.title}</span>
-                      <span className="text-[10px] text-[#AFA4A4] bg-white dark:bg-[#1E1E1E] px-2 py-0.5 rounded-full shadow-sm ml-auto shrink-0">加入今天</span>
+                      {selectedPlanToPlace?.id === p.id ? (
+                        <span className="text-[10px] text-white bg-[#554D4D] px-3 py-1 rounded-full shadow-sm ml-auto shrink-0 animate-pulse">取消选中</span>
+                      ) : (
+                        <span className="text-[10px] text-[#AFA4A4] bg-white dark:bg-[#1E1E1E] border border-gray-100 dark:border-gray-800 px-3 py-1 rounded-full shadow-sm ml-auto shrink-0">点击选中</span>
+                      )}
                     </div>
-                    <div className="flex items-center gap-2 pl-3 ml-2 border-l border-[#EFEBE7] dark:border-[#333]">
-                      <button onClick={(e) => { e.stopPropagation(); openModal('common', 'edit', '', p); }} className="text-[#AFA4A4] hover:text-[#8D7D7D]"><Edit3 size={16}/></button>
+                    <div className="flex items-center gap-2 pl-3 ml-2 border-l border-[#EFEBE7] dark:border-[#444]">
+                      <button onClick={(e) => { e.stopPropagation(); openModal('common', 'edit', '', p); }} className="text-[#AFA4A4] hover:text-[#8D7D7D] p-1"><Edit3 size={16}/></button>
                     </div>
                   </div>
                 ))}
+              </div>
+              <div className="mt-4 text-center text-[11px] text-[#AFA4A4] font-bold">
+                💡 选中计划后，在日历上点哪里就加到哪里
               </div>
             </div>
           </div>
