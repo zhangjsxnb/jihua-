@@ -1,11 +1,11 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   ChevronLeft, ChevronRight, Plus, Calendar as CalendarIcon,
   Clock, LayoutGrid, Trophy, Trash2, Edit3, X, Check, LogOut, User,
-  PieChart, Save, Download, ListTodo, PlusCircle, Sparkles, Wand2, Loader2, Bookmark
+  Moon, Sun, PieChart, Bookmark, ListTodo, PlusCircle, Sparkles, Wand2, Loader2
 } from 'lucide-react';
 
-// --- Supabase 环境配置 ---
+// --- Supabase & DeepSeek 环境配置 ---
 const getEnv = (key) => {
   try { return import.meta.env[key]; } catch (e) { return null; }
 };
@@ -15,7 +15,7 @@ const supabaseKey = getEnv('sb_publishable_OsNM8K_bgwUQhGosWMrCfA_Lt4k93DL') || 
 // ==========================================
 // 🚀 DEEPSEEK API 配置区域
 // ==========================================
-const DEEPSEEK_API_KEY = "sk-184f5a31a8e841a5abb427a82481a763"; // <--- 在这里替换你的真实 Key
+const DEEPSEEK_API_KEY = " sk-184f5a31a8e841a5abb427a82481a763"; 
 
 const callDeepSeek = async (prompt, systemPrompt = "") => {
   const url = `https://api.deepseek.com/chat/completions`;
@@ -46,6 +46,18 @@ const callDeepSeek = async (prompt, systemPrompt = "") => {
 };
 // ==========================================
 
+// --- 全局音频引擎 (解决手机端无声问题) ---
+let globalAudioCtx = null;
+const initAudio = () => {
+  if (!globalAudioCtx) {
+    const AudioContext = window.AudioContext || window.webkitAudioContext;
+    if (AudioContext) globalAudioCtx = new AudioContext();
+  }
+  if (globalAudioCtx && globalAudioCtx.state === 'suspended') {
+    globalAudioCtx.resume();
+  }
+};
+
 // --- 常量配置 ---
 const COLORS = [
   { name: '开心果白', bg: 'bg-[#F6EDE7]', text: 'text-[#8D7D7D]', dot: 'bg-[#D6C7C7]', border: 'border-[#F2E8E1]', hex: '#F6EDE7' },
@@ -69,8 +81,11 @@ const App = () => {
   const [modalConfig, setModalConfig] = useState({ isOpen: false, type: 'task', mode: 'add', dateStr: '', target: null });
   const [isMobileCommonOpen, setIsMobileCommonOpen] = useState(false);
   const [isWeekCommonOpen, setIsWeekCommonOpen] = useState(false);
+  
+  // ✨ 长按删除弹窗状态
+  const [deletePrompt, setDeletePrompt] = useState(null);
 
-  // 点击连加状态
+  // 连加状态
   const [selectedPlanToPlace, setSelectedPlanToPlace] = useState(null);
 
   // --- 表单状态 ---
@@ -95,7 +110,7 @@ const App = () => {
   const [authError, setAuthError] = useState('');
   const [isOffline, setIsOffline] = useState(true);
 
-  // 依赖加载
+  // 依赖加载与音频解锁
   useEffect(() => {
     if (supabaseUrl !== 'YOUR_SUPABASE_URL' && !window.supabase) {
       const script = document.createElement('script');
@@ -111,25 +126,33 @@ const App = () => {
       script.src = 'https://cdn.jsdelivr.net/npm/canvas-confetti@1.6.0/dist/confetti.browser.min.js';
       document.head.appendChild(script);
     }
-    document.body.style.backgroundColor = '#FFFBF8'; // 锁定浅色背景
+    document.body.style.backgroundColor = '#FFFBF8'; 
+
+    // 解锁手机端音频
+    const unlock = () => initAudio();
+    document.addEventListener('touchstart', unlock, { once: true, passive: true });
+    document.addEventListener('click', unlock, { once: true, passive: true });
+    return () => {
+      document.removeEventListener('touchstart', unlock);
+      document.removeEventListener('click', unlock);
+    };
   }, []);
 
-  // --- 音效与动画 ---
   const playDing = () => {
     try {
-      const AudioContext = window.AudioContext || window.webkitAudioContext;
-      const ctx = new AudioContext();
-      const osc = ctx.createOscillator();
-      const gainNode = ctx.createGain();
+      initAudio();
+      if (!globalAudioCtx) return;
+      const osc = globalAudioCtx.createOscillator();
+      const gainNode = globalAudioCtx.createGain();
       osc.type = 'sine';
-      osc.frequency.setValueAtTime(880, ctx.currentTime); // 清脆的A5音
-      gainNode.gain.setValueAtTime(0, ctx.currentTime);
-      gainNode.gain.linearRampToValueAtTime(0.3, ctx.currentTime + 0.05); 
-      gainNode.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.5);
+      osc.frequency.setValueAtTime(880, globalAudioCtx.currentTime); // 清脆A5
+      gainNode.gain.setValueAtTime(0, globalAudioCtx.currentTime);
+      gainNode.gain.linearRampToValueAtTime(0.3, globalAudioCtx.currentTime + 0.05); 
+      gainNode.gain.exponentialRampToValueAtTime(0.001, globalAudioCtx.currentTime + 0.5);
       osc.connect(gainNode);
-      gainNode.connect(ctx.destination);
+      gainNode.connect(globalAudioCtx.destination);
       osc.start();
-      osc.stop(ctx.currentTime + 0.5);
+      osc.stop(globalAudioCtx.currentTime + 0.5);
     } catch (e) {
       console.log("Audio play failed");
     }
@@ -171,7 +194,6 @@ const App = () => {
     fetchData('common_plans', (d) => d.length > 0 ? setCommonPlans(d) : setCommonPlans(DEFAULT_COMMON_PLANS), 'jihua_commonPlans');
   }, [user, showAuth, isOffline, supabaseClient]);
 
-  // 工具函数
   const formatDate = (date) => {
     const y = date.getFullYear();
     const m = String(date.getMonth() + 1).padStart(2, '0');
@@ -200,7 +222,7 @@ const App = () => {
     e.stopPropagation();
     if (!currentStatus) {
       triggerConfetti(e);
-      playDing(); // <-- 触发完成音效
+      playDing(); 
     }
     syncData('tasks', 'update', id, { completed: !currentStatus }, 'jihua_tasks', setTasks);
   };
@@ -273,11 +295,43 @@ const App = () => {
     }
   };
 
+  // ✨ 核心机制：长按删除检测器
+  const longPressTimerRef = useRef(null);
+  const isLongPressRef = useRef(false);
+
+  const getLongPressEvents = (task) => ({
+    onContextMenu: (e) => e.preventDefault(), // 禁用默认右键菜单
+    onTouchStart: () => {
+      isLongPressRef.current = false;
+      longPressTimerRef.current = setTimeout(() => {
+        isLongPressRef.current = true;
+        setDeletePrompt(task);
+        if (window.navigator && window.navigator.vibrate) window.navigator.vibrate(50);
+      }, 500);
+    },
+    onTouchEnd: () => clearTimeout(longPressTimerRef.current),
+    onTouchMove: () => clearTimeout(longPressTimerRef.current),
+    onMouseDown: () => {
+      isLongPressRef.current = false;
+      longPressTimerRef.current = setTimeout(() => {
+        isLongPressRef.current = true;
+        setDeletePrompt(task);
+      }, 500);
+    },
+    onMouseUp: () => clearTimeout(longPressTimerRef.current),
+    onMouseLeave: () => clearTimeout(longPressTimerRef.current),
+    onClick: (e) => {
+      e.stopPropagation();
+      if (isLongPressRef.current) return; // 如果刚才触发了长按，则不触发点击
+      openModal('task', 'edit', task.date, task);
+    }
+  });
+
   // --- ✨ AI 功能 ---
   const handleAiBreakdown = async () => {
     if (!formTitle.trim()) return;
     if (DEEPSEEK_API_KEY === "在这里填入你的DeepSeek_API_KEY") {
-       alert("请先在代码第 14 行配置你的 DeepSeek API Key 才能使用 AI 功能哦！");
+       alert("请先在代码第 18 行配置你的 DeepSeek API Key 才能使用 AI 功能哦！");
        return;
     }
     setIsAiLoading(true);
@@ -368,11 +422,12 @@ const App = () => {
     const fullCalendar = calendarDays.concat(Array(paddingDays).fill(null));
 
     return (
-      <div className="bg-white rounded-[32px] border border-[#F0EBE7] overflow-hidden shadow-sm flex flex-col">
+      // ✨ 移除手机端左右白边，填满屏幕
+      <div className="bg-white rounded-none md:rounded-[32px] border-y md:border border-[#F0EBE7] overflow-hidden shadow-sm flex flex-col -mx-4 md:mx-0 mt-2 md:mt-0">
         <div className="grid grid-cols-7 border-b border-[#F0EBE7] bg-[#FAF9F9]">
-          {['一', '二', '三', '四', '五', '六', '日'].map(d => <div key={d} className="text-center text-[11px] font-black text-[#AFA4A4] py-4">{d}</div>)}
+          {['一', '二', '三', '四', '五', '六', '日'].map(d => <div key={d} className="text-center text-[11px] font-black text-[#AFA4A4] py-3">{d}</div>)}
         </div>
-        <div className="grid grid-cols-7 border-l border-t border-[#F0EBE7]">
+        <div className="grid grid-cols-7 bg-[#F0EBE7] gap-px">
           {fullCalendar.map((day, idx) => {
             const date = day ? new Date(currentDate.getFullYear(), currentDate.getMonth(), day) : null;
             const dateStr = date ? formatDate(date) : '';
@@ -381,19 +436,19 @@ const App = () => {
 
             return (
               <div key={idx} onClick={() => date && handleDateClick(dateStr)}
-                className={`min-h-[120px] md:min-h-[150px] p-0 flex flex-col border-r border-b border-[#F0EBE7] transition-all ${day ? 'bg-white hover:bg-[#FAF9F9] cursor-pointer' : 'bg-[#FAF9F9]'}`}>
-                <div className="p-1.5 flex justify-center md:justify-start">
+                className={`min-h-[90px] md:min-h-[130px] p-0.5 md:p-1 flex flex-col transition-all ${day ? 'bg-white hover:bg-[#FAF9F9] cursor-pointer' : 'bg-[#FAF9F9]'}`}>
+                <div className="p-1 flex justify-center md:justify-start">
                    {day && <span className={`text-[12px] md:text-[14px] font-black w-6 h-6 md:w-7 md:h-7 flex items-center justify-center rounded-full ${isToday ? 'bg-[#CDE7C7] text-white shadow-sm' : 'text-[#8D7D7D]'}`}>{day}</span>}
                 </div>
-                {/* ✨ 无间隙横条设计：填满格子，带完成按钮 */}
-                <div className="flex flex-col gap-0 overflow-y-auto no-scrollbar w-full">
+                {/* ✨ 无缝横条大字设计 */}
+                <div className="flex flex-col gap-[2px] overflow-y-auto no-scrollbar w-full pb-1">
                   {dayTasks.map(t => (
-                    <div key={t.id} onClick={(e) => { e.stopPropagation(); openModal('task', 'edit', t.date, t); }} 
-                      className={`group flex items-start px-1 py-[3px] md:py-1 w-full text-left ${t.color.bg} ${t.color.text} font-bold hover:brightness-95 transition-all whitespace-normal break-words leading-tight ${t.completed ? 'opacity-40 grayscale' : ''}`}>
+                    <div key={t.id} {...getLongPressEvents(t)}
+                      className={`group flex items-start px-1.5 py-[3px] w-full text-left ${t.color.bg} ${t.color.text} font-bold hover:brightness-95 transition-all whitespace-normal break-words leading-tight ${t.completed ? 'opacity-40 grayscale' : ''}`}>
                       <button onClick={(e) => toggleComplete(t.id, e, t.completed)} className="shrink-0 w-3 h-3 mt-0.5 mr-1 flex items-center justify-center opacity-70 group-hover:opacity-100">
                         {t.completed ? <Check size={10} strokeWidth={4} /> : <div className={`w-1.5 h-1.5 rounded-full ${t.color.dot}`} />}
                       </button>
-                      <span className={`text-[9px] md:text-[10px] flex-1 ${t.completed ? 'line-through' : ''}`}>{t.title}</span>
+                      <span className={`text-[11px] md:text-[12px] flex-1 ${t.completed ? 'line-through' : ''}`}>{t.title}</span>
                     </div>
                   ))}
                 </div>
@@ -421,32 +476,32 @@ const App = () => {
         </div>
 
         <div className="flex flex-col md:flex-row gap-4 items-start w-full transition-all duration-300">
-          <div className="flex-1 bg-white rounded-[32px] border border-[#F0EBE7] overflow-hidden shadow-sm flex flex-col w-full">
+          <div className="flex-1 bg-white rounded-[32px] border border-[#F0EBE7] overflow-hidden shadow-sm flex flex-col w-full h-auto">
             {weekDays.map((date, idx) => {
               const dateStr = formatDate(date);
               const dayTasks = tasks.filter(t => t.date === dateStr);
               const isToday = formatDate(new Date()) === dateStr;
               return (
                 <div key={idx} onClick={() => handleDateClick(dateStr)}
-                  className={`flex flex-row min-h-[80px] border-b border-[#F0EBE7] last:border-0 cursor-pointer transition-colors ${isToday ? 'bg-[#F6FBF6]' : 'hover:bg-[#FAF9F9]'}`}>
+                  className={`flex flex-row h-auto border-b border-[#F0EBE7] last:border-0 cursor-pointer transition-colors ${isToday ? 'bg-[#F6FBF6]' : 'hover:bg-[#FAF9F9]'}`}>
                   
-                  <div className={`w-[70px] md:w-[90px] p-3 md:p-4 flex flex-col justify-center items-center border-r border-[#F0EBE7] shrink-0 ${isToday ? 'text-[#5E7D5A]' : 'text-[#8D7D7D]'}`}>
+                  <div className={`w-[70px] md:w-[90px] p-3 flex flex-col justify-center items-center border-r border-[#F0EBE7] shrink-0 ${isToday ? 'text-[#5E7D5A]' : 'text-[#8D7D7D]'}`}>
                     <span className="text-xl md:text-2xl font-black leading-none">{date.getDate()}</span>
                     <span className="text-[10px] md:text-xs font-bold mt-1 uppercase">周{['一', '二', '三', '四', '五', '六', '日'][idx]}</span>
                   </div>
 
                   <div className="flex-1 p-3 md:p-4 flex flex-col gap-2 justify-center">
                     {dayTasks.map(t => (
-                      <div key={t.id} onClick={(e) => { e.stopPropagation(); openModal('task', 'edit', t.date, t); }}
+                      <div key={t.id} {...getLongPressEvents(t)}
                         className={`flex items-start gap-2 group ${t.completed ? 'opacity-40 line-through' : ''}`}>
-                        <button onClick={(e) => toggleComplete(t.id, e, t.completed)} className="shrink-0 w-4 h-4 mt-0.5 rounded-full border border-gray-200 flex items-center justify-center bg-white shadow-sm">
+                        <button onClick={(e) => toggleComplete(t.id, e, t.completed)} className="shrink-0 w-4 h-4 mt-0.5 md:mt-1 rounded-full border border-gray-200 flex items-center justify-center bg-white shadow-sm">
                           {t.completed ? <Check size={10} strokeWidth={4} className="text-[#CDE7C7]"/> : <div className={`w-1.5 h-1.5 rounded-full ${t.color.dot}`} />}
                         </button>
                         <div className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-2">
-                           <span className={`text-xs md:text-sm font-bold px-2 py-1 rounded-[6px] ${t.color.bg} ${t.color.text} break-words whitespace-normal leading-tight shadow-sm transition-all hover:brightness-95`}>
+                           {/* ✨ 周视图字号放大、允许换行 */}
+                           <span className={`text-sm md:text-base font-bold px-2.5 py-1.5 rounded-[8px] ${t.color.bg} ${t.color.text} break-words whitespace-normal leading-snug shadow-sm transition-all hover:brightness-95`}>
                              {t.title}
                            </span>
-                           {/* ✨ 显示时间 */}
                            {t.time && <span className="text-[10px] font-bold text-[#AFA4A4] flex items-center gap-1"><Clock size={10}/> {t.time}</span>}
                         </div>
                       </div>
@@ -471,7 +526,7 @@ const App = () => {
                     className={`p-3 rounded-[16px] border flex items-center gap-2 cursor-pointer transition-all ${selectedPlanToPlace?.id === p.id ? 'bg-[#F5ECBE] border-[#8D825A]' : 'bg-[#FAF9F9] border-transparent hover:border-[#F0EBE7]'}`}>
                      <div className={`w-2 h-2 rounded-full shrink-0 ${p.color.dot}`}></div>
                      <span className="text-xs font-bold truncate flex-1">{p.title}</span>
-                     <button onClick={(e) => { e.stopPropagation(); openModal('common', 'edit', '', p); }} className="opacity-0 group-hover:opacity-100 text-[#AFA4A4] hover:text-[#554D4D]"><Edit3 size={12}/></button>
+                     <button onClick={(e) => { e.stopPropagation(); openModal('common', 'edit', '', p); }} className="text-[#AFA4A4] hover:text-[#554D4D] p-1"><Edit3 size={14}/></button>
                   </div>
                 ))}
               </div>
@@ -508,7 +563,7 @@ const App = () => {
         
         <div className="space-y-4 md:space-y-6">
           {dayTasks.map(t => (
-            <div key={t.id} onClick={() => openModal('task', 'edit', t.date, t)}
+            <div key={t.id} {...getLongPressEvents(t)}
               className={`group flex flex-col p-6 md:p-8 rounded-[28px] md:rounded-[32px] border-l-[8px] md:border-l-[10px] ${t.color.border.replace('border-', 'border-l-')} ${t.color.bg.replace('bg-', 'bg-opacity-20 bg-')} bg-white shadow-sm hover:shadow-md transition-all cursor-pointer border border-y-[#F0EBE7] border-r-[#F0EBE7]`}>
               <div className="flex items-start justify-between">
                 <div className="flex items-start gap-4 md:gap-6 flex-1">
@@ -517,7 +572,6 @@ const App = () => {
                   </button>
                   <div className="flex flex-col gap-1.5">
                      <span className={`text-[18px] md:text-[22px] font-black text-[#554D4D] break-words whitespace-normal leading-tight ${t.completed ? 'line-through opacity-30' : ''}`}>{t.title}</span>
-                     {/* ✨ 显示时间 */}
                      {t.time && (
                        <span className={`inline-flex items-center gap-1.5 text-xs font-bold px-2 py-1 rounded-md w-fit ${t.completed ? 'opacity-30' : 'bg-[#FAF9F9] text-[#AFA4A4]'}`}>
                          <Clock size={12}/> {t.time}
@@ -564,7 +618,7 @@ const App = () => {
     <div>
       <div className="min-h-screen bg-[#FFFBF8] text-[#554D4D] font-sans flex flex-col md:flex-row transition-colors duration-300">
         
-        {/* 全局连加放置模式提示条 */}
+        {/* 全局连加放置提示条 */}
         {selectedPlanToPlace && (
           <div className="fixed top-20 left-1/2 -translate-x-1/2 z-50 bg-[#554D4D] text-white px-6 py-3 rounded-full shadow-2xl flex items-center gap-4 animate-in slide-in-from-top-4">
             <span className="text-xs md:text-sm font-bold flex items-center gap-2">
@@ -648,8 +702,8 @@ const App = () => {
         </nav>
 
         {/* 主内容区 */}
-        <main className="flex-1 p-4 md:p-10 flex flex-col gap-6 overflow-y-auto pb-28 md:pb-10 transition-all">
-          <header className="flex flex-row items-center justify-between">
+        <main className={`flex-1 flex flex-col gap-4 overflow-y-auto pb-28 md:pb-10 transition-all ${view === 'month' ? 'p-0 pt-2 md:p-10' : 'p-4 md:p-10'}`}>
+          <header className={`flex flex-row items-center justify-between ${view === 'month' ? 'px-4 md:px-0' : ''}`}>
             <div className="flex items-center gap-4 md:gap-8">
                <div className="flex bg-white rounded-full shadow-sm border border-[#F0EBE7] p-1">
                   <button onClick={() => {
@@ -669,7 +723,6 @@ const App = () => {
                </h2>
             </div>
             <div className="flex items-center gap-3 z-10">
-              {/* ✨ 手机端极简的重新登录按钮 */}
               {isOffline && (
                 <button onClick={() => setShowAuth(true)} className="md:hidden p-2.5 text-[#AFA4A4] bg-white border border-[#F0EBE7] rounded-full shadow-sm hover:text-[#554D4D]">
                   <User size={16}/>
@@ -679,7 +732,6 @@ const App = () => {
             </div>
           </header>
 
-          {/* ✨ AI 智能教练挂件 */}
           {view === 'day' && (
             <div className="w-full bg-[#F6FBF6] p-5 md:p-6 rounded-[28px] md:rounded-[32px] border border-[#CDE7C7] shadow-sm animate-in slide-in-from-top-4 duration-500">
               <div className="flex items-start gap-4">
@@ -704,7 +756,7 @@ const App = () => {
             </div>
           )}
 
-          <div className="flex-1">
+          <div className="flex-1 w-full">
             {view === 'month' && <MonthView />}
             {view === 'week' && <WeekView />}
             {view === 'day' && <DayView />}
@@ -712,36 +764,56 @@ const App = () => {
           </div>
         </main>
 
-        {/* ---------------- 弹窗区域 ---------------- */}
+        {/* ---------------- ✨ 长按删除确认弹窗 ---------------- */}
+        {deletePrompt && (
+          <div className="fixed inset-0 bg-[#554D4D]/40 backdrop-blur-sm z-[200] flex items-center justify-center p-6">
+            <div className="bg-white rounded-[28px] p-6 w-full max-w-[280px] text-center shadow-2xl animate-in zoom-in-95">
+               <div className="w-14 h-14 bg-red-50 rounded-full flex items-center justify-center mx-auto mb-4 text-red-400">
+                 <Trash2 size={24} />
+               </div>
+               <h3 className="text-lg font-black text-[#554D4D] mb-2">删除计划？</h3>
+               <p className="text-xs text-[#AFA4A4] mb-6 truncate px-2 font-bold">{deletePrompt.title}</p>
+               <div className="flex gap-3">
+                 <button onClick={() => setDeletePrompt(null)} className="flex-1 py-3.5 bg-[#FAF9F9] rounded-xl font-bold text-[#8D7D7D] text-sm hover:brightness-95">取消</button>
+                 <button onClick={() => {
+                   syncData('tasks', 'delete', deletePrompt.id, null, 'jihua_tasks', setTasks);
+                   setDeletePrompt(null);
+                 }} className="flex-1 py-3.5 bg-red-100 rounded-xl font-bold text-red-500 text-sm hover:brightness-95 shadow-sm">删除</button>
+               </div>
+            </div>
+          </div>
+        )}
+
+        {/* ---------------- 任务/常用编辑弹窗 (✨ 已瘦身极简) ---------------- */}
         {modalConfig.isOpen && (
-          <div className="fixed inset-0 bg-[#554D4D]/30 backdrop-blur-sm z-[100] flex items-center justify-center p-4 md:p-6"
+          <div className="fixed inset-0 bg-[#554D4D]/40 backdrop-blur-sm z-[100] flex items-center justify-center p-4 md:p-6"
             onClick={(e) => e.target === e.currentTarget && setModalConfig({ ...modalConfig, isOpen: false })}>
-            <div className="bg-white rounded-[32px] md:rounded-[40px] p-6 md:p-10 w-full max-w-md shadow-2xl border border-[#F5F2F2] animate-in zoom-in-95 max-h-[90vh] overflow-y-auto no-scrollbar">
-              <div className="flex justify-between items-center mb-6">
-                <h3 className="text-xl md:text-2xl font-black text-[#554D4D]">
+            <div className="bg-white rounded-[28px] md:rounded-[36px] p-5 md:p-8 w-full max-w-sm shadow-2xl border border-[#F5F2F2] animate-in zoom-in-95 max-h-[90vh] overflow-y-auto no-scrollbar">
+              <div className="flex justify-between items-center mb-4">
+                <h3 className="text-lg md:text-xl font-black text-[#554D4D]">
                   {modalConfig.mode === 'add' ? (modalConfig.type === 'task' ? '新计划' : '新增常用') : '修改计划'}
                 </h3>
-                <button onClick={() => setModalConfig({ ...modalConfig, isOpen: false })} className="text-[#AFA4A4] bg-[#FAF9F9] p-2 rounded-full hover:text-[#554D4D]"><X size={18} /></button>
+                <button onClick={() => setModalConfig({ ...modalConfig, isOpen: false })} className="text-[#AFA4A4] bg-[#FAF9F9] p-2 rounded-full hover:text-[#554D4D]"><X size={16} /></button>
               </div>
 
               <input autoFocus value={formTitle} onChange={(e) => setFormTitle(e.target.value)} placeholder="准备做什么？"
-                className="w-full text-lg md:text-xl p-5 bg-[#FAF9F9] rounded-[20px] outline-none mb-6 font-bold text-[#554D4D] border border-transparent focus:border-[#CDE7C7] transition-all" />
+                className="w-full text-base md:text-lg p-3 md:p-4 bg-[#FAF9F9] rounded-[16px] outline-none mb-4 font-bold text-[#554D4D] border border-transparent focus:border-[#CDE7C7] transition-all" />
 
               {modalConfig.type === 'task' && (
                 <>
-                  <div className="flex items-center justify-between mb-6 px-1">
+                  <div className="flex items-center justify-between mb-5 px-1">
                     <div className="flex items-center gap-2">
                       <Clock size={16} className="text-[#AFA4A4]" />
                       <input type="time" value={formTime} onChange={e => setFormTime(e.target.value)}
-                        className="bg-[#FAF9F9] px-3 py-2 rounded-[12px] font-bold text-xs outline-none" />
+                        className="bg-[#FAF9F9] px-3 py-1.5 rounded-[12px] font-bold text-xs outline-none text-[#554D4D]" />
                     </div>
                     <button onClick={handleAiBreakdown} disabled={isAiLoading || !formTitle.trim()}
-                      className="flex items-center gap-1.5 px-3 py-2 bg-[#F5ECBE] text-[#8D825A] rounded-[12px] font-bold text-xs hover:scale-105 transition-all disabled:opacity-50">
-                      {isAiLoading ? <Loader2 size={14} className="animate-spin" /> : <Wand2 size={14} />}✨ DeepSeek 拆解
+                      className="flex items-center gap-1.5 px-3 py-1.5 bg-[#F5ECBE] text-[#8D825A] rounded-[12px] font-bold text-xs hover:scale-105 transition-all disabled:opacity-50 shadow-sm">
+                      {isAiLoading ? <Loader2 size={12} className="animate-spin" /> : <Wand2 size={12} />}✨ DeepSeek 拆解
                     </button>
                   </div>
 
-                  <div className="mb-6 px-1">
+                  <div className="mb-5 px-1">
                     <div className="flex items-center gap-2 mb-2 text-[#AFA4A4] font-black text-[10px] uppercase tracking-widest"><ListTodo size={12}/> 子步骤</div>
                     <div className="space-y-2">
                       {formSubtasks.map((st, i) => (
@@ -751,7 +823,7 @@ const App = () => {
                             {st.completed && <Check size={12} strokeWidth={4}/>}
                           </button>
                           <input value={st.title} onChange={(e) => setFormSubtasks(prev => prev.map((s, idx) => idx === i ? {...s, title: e.target.value} : s))}
-                            className={`flex-1 bg-transparent outline-none text-xs font-bold ${st.completed ? 'line-through opacity-40' : ''}`} placeholder="描述步骤..." />
+                            className={`flex-1 bg-transparent outline-none text-xs font-bold ${st.completed ? 'line-through opacity-40' : 'text-[#554D4D]'}`} placeholder="描述步骤..." />
                           <button onClick={() => setFormSubtasks(prev => prev.filter((_, idx) => idx !== i))} className="text-[#D1C7C7] hover:text-red-400 p-1"><X size={14}/></button>
                         </div>
                       ))}
@@ -764,20 +836,20 @@ const App = () => {
                 </>
               )}
 
-              <div className="flex justify-between mb-8 no-scrollbar px-1">
+              <div className="flex justify-between mb-6 no-scrollbar px-1">
                 {COLORS.map(c => (
                   <button key={c.name} onClick={() => setFormColor(c)}
-                    className={`w-8 h-8 md:w-10 md:h-10 rounded-full shrink-0 ${c.bg} border-[3px] transition-all ${formColor.hex === c.hex ? 'border-[#8D7D7D] scale-110 shadow-md' : 'border-transparent'}`} />
+                    className={`w-7 h-7 md:w-8 md:h-8 rounded-full shrink-0 ${c.bg} border-[3px] transition-all ${formColor.hex === c.hex ? 'border-[#8D7D7D] scale-110 shadow-md' : 'border-transparent'}`} />
                 ))}
               </div>
 
               <div className="flex gap-3">
                 {modalConfig.mode === 'edit' && (
-                  <button onClick={deleteAction} className="w-14 md:w-[72px] flex items-center justify-center bg-red-50 text-red-300 rounded-[20px] hover:bg-red-100 transition-colors">
-                    <Trash2 size={20} />
+                  <button onClick={deleteAction} className="w-[52px] flex items-center justify-center bg-red-50 text-red-300 rounded-[16px] hover:bg-red-100 transition-colors">
+                    <Trash2 size={18} />
                   </button>
                 )}
-                <button onClick={saveAction} className="flex-1 py-4 bg-[#CDE7C7] text-white rounded-[20px] font-black uppercase tracking-widest shadow-lg hover:brightness-95 transition-all text-xs md:text-sm">
+                <button onClick={saveAction} className="flex-1 py-3 bg-[#CDE7C7] text-white rounded-[16px] font-black uppercase tracking-widest shadow-lg hover:brightness-95 transition-all text-xs md:text-sm">
                   保存
                 </button>
               </div>
@@ -817,7 +889,7 @@ const App = () => {
                 ))}
               </div>
               <div className="mt-4 text-center text-[11px] text-[#AFA4A4] font-bold">
-                💡 选中计划后，在日历上点哪里就加到哪里
+                💡 选中常用计划后，在日历上连按添加
               </div>
             </div>
           </div>
