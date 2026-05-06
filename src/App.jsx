@@ -9,8 +9,8 @@ import {
 const getEnv = (key) => {
   try { return import.meta.env[key]; } catch (e) { return null; }
 };
-const supabaseUrl = getEnv('https://ncbzklntlyiqvpmezpnk.supabase.co') || 'YOUR_SUPABASE_URL';
-const supabaseKey = getEnv('sb_publishable_OsNM8K_bgwUQhGosWMrCfA_Lt4k93DL') || 'YOUR_SUPABASE_ANON_KEY';
+const supabaseUrl = 'https://ncbzklntlyiqvpmezpnk.supabase.co' || 'YOUR_SUPABASE_URL';
+const supabaseKey = 'sb_publishable_OsNM8K_bgwUQhGosWMrCfA_Lt4k93DL' || 'YOUR_SUPABASE_ANON_KEY';
 
 // ==========================================
 // 🚀 DEEPSEEK API 配置区域
