@@ -398,8 +398,7 @@ const App = () => {
           <h1 className="text-2xl font-black italic tracking-tighter text-[#554D4D] mb-8">PLANNER</h1>
           <form onSubmit={handleEmailAuth} className="flex flex-col gap-4 text-left">
             <input type="email" placeholder="邮箱账号" required value={email} onChange={e => setEmail(e.target.value)} className="w-full px-5 py-4 bg-[#FAF9F9] rounded-[20px] outline-none font-bold text-sm" />
-            {isOtpSent && <input type="text" placeholder="6位验证码" required value={otpCode} onChange={e => setOtpCode(e.target.value)} className="w-full px-5 py-4 bg-[#FAF9F9] rounded-[20px] outline-none font-bold text-sm text-center tracking-widest" maxLength={6} />}
-            <button type="submit" disabled={isLoading} className="w-full py-4 bg-[#CDE7C7] text-white rounded-[20px] font-bold uppercase tracking-widest hover:brightness-95 transition-all">{isLoading ? '加载中...' : (isOtpSent ? '登 录' : '发送验证码')}</button>
+{isOtpSent && <input type="text" placeholder="请输入验证码" required value={otpCode} onChange={e => setOtpCode(e.target.value)} className="w-full px-5 py-4 bg-[#FAF9F9] rounded-[20px] outline-none font-bold text-sm tracking-normal" />}            <button type="submit" disabled={isLoading} className="w-full py-4 bg-[#CDE7C7] text-white rounded-[20px] font-bold uppercase tracking-widest hover:brightness-95 transition-all">{isLoading ? '加载中...' : (isOtpSent ? '登 录' : '发送验证码')}</button>
           </form>
           {authError && <p className="text-red-400 text-xs mt-4 font-bold">{authError}</p>}
           <button onClick={() => { setIsOffline(true); setShowAuth(false); }} className="mt-6 text-[11px] font-bold text-[#AFA4A4] underline">访客模式体验</button>
