@@ -68,7 +68,7 @@ const COLORS = [
 ];
 
 // ========== 本地桥接：与 Corgi-Memo 同步 ==========
-const BRIDGE_URL = 'http://127.0.0.1:9876/tasks';
+const BRIDGE_URL = 'https://127.0.0.1:9876/tasks';
 
 const plannerToShared = (task) => ({
   id: task.id,
