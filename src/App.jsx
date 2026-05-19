@@ -67,6 +67,32 @@ const COLORS = [
   { name: 'BABY蓝', bg: 'bg-[#BACFE5]', text: 'text-[#5A6D8D]', dot: 'bg-[#98AFD0]', border: 'border-[#AFCAE2]', hex: '#BACFE5' },
 ];
 
+// ========== 本地桥接：与 Corgi-Memo 同步 ==========
+const BRIDGE_URL = 'http://127.0.0.1:9876/tasks';
+
+const plannerToShared = (task) => ({
+  id: task.id,
+  title: task.title,
+  date: task.date,
+  time: task.time || '',
+  completed: task.completed || false,
+  reminderOffset: task.reminderOffset || 0,
+  color: task.color || null,
+  subtasks: task.subtasks || [],
+});
+
+const sharedToPlanner = (task) => ({
+  id: task.id,
+  title: task.title || '',
+  date: task.date,
+  time: task.time || '',
+  completed: task.completed || false,
+  color: task.color || COLORS[0],
+  subtasks: task.subtasks || [],
+  reminderOffset: task.reminderOffset || 0,
+});
+// =============================================
+
 const DEFAULT_COMMON_PLANS = [
   { id: 'c1', title: '早起瑜伽', color: COLORS[1] },
   { id: 'c2', title: '深度阅读', color: COLORS[0] },
@@ -109,6 +135,9 @@ const App = () => {
   const [isLoading, setIsLoading] = useState(false);
   const [authError, setAuthError] = useState('');
   const [isOffline, setIsOffline] = useState(true);
+
+  const bridgeImportingRef = useRef(false);
+  const bridgeFirstPollDone = useRef(false);
 
   // 依赖加载与音频解锁
   useEffect(() => {
@@ -194,6 +223,57 @@ const App = () => {
     fetchData('common_plans', (d) => d.length > 0 ? setCommonPlans(d) : setCommonPlans(DEFAULT_COMMON_PLANS), 'jihua_commonPlans');
   }, [user, showAuth, isOffline, supabaseClient]);
 
+  // 桥接保存：本地任务变更时推送到共享文件
+  useEffect(() => {
+    if (tasks.length === 0) return;
+    if (!bridgeImportingRef.current) {
+      const payload = { tasks: tasks.map(plannerToShared), _source: 'planner' };
+      fetch(BRIDGE_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      }).catch(() => {});
+    }
+    bridgeImportingRef.current = false;
+  }, [tasks]);
+
+  // 桥接轮询：每 5 秒检查 Corgi-Memo 的变更
+  useEffect(() => {
+    const poll = async () => {
+      try {
+        const res = await fetch(BRIDGE_URL);
+        const data = await res.json();
+        const shouldImport = !bridgeFirstPollDone.current
+          ? data.tasks?.length > 0
+          : data._meta?.updatedBy !== 'planner' && data.tasks?.length > 0;
+
+        if (shouldImport) {
+          bridgeImportingRef.current = true;
+          const importMap = new Map(data.tasks.map(t => [t.id, sharedToPlanner(t)]));
+          setTasks(prev => {
+            const merged = prev.map(t => {
+              const incoming = importMap.get(t.id);
+              if (incoming) {
+                importMap.delete(t.id);
+                return { ...t, ...incoming, color: t.color || incoming.color };
+              }
+              return t;
+            });
+            for (const t of importMap.values()) merged.push(t);
+            return merged;
+          });
+        }
+        bridgeFirstPollDone.current = true;
+      } catch {
+        // 桥接不可用，忽略
+      }
+    };
+
+    poll();
+    const interval = setInterval(poll, 5000);
+    return () => clearInterval(interval);
+  }, []);
+
   const formatDate = (date) => {
     const y = date.getFullYear();
     const m = String(date.getMonth() + 1).padStart(2, '0');
@@ -206,6 +286,15 @@ const App = () => {
       if (action === 'delete') await supabaseClient.from(table).delete().eq('id', id).eq('user_id', user.id);
       if (action === 'update') await supabaseClient.from(table).update(payload).eq('id', id).eq('user_id', user.id);
       if (action === 'insert') await supabaseClient.from(table).insert([{ ...payload, user_id: user.id }]);
+      // 同步更新本地状态，确保 UI 即时响应 & 触发桥接推送
+      setLocal(prev => {
+        let n = prev;
+        if (action === 'delete') n = prev.filter(i => i.id !== id);
+        else if (action === 'update') n = prev.map(i => i.id === id ? { ...i, ...payload } : i);
+        else if (action === 'insert') n = [...prev, payload];
+        localStorage.setItem(localKey, JSON.stringify(n));
+        return n;
+      });
     } else {
       setLocal(prev => {
         let n = prev;
